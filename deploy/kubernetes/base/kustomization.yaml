@@ -4,13 +4,27 @@ kind: Kustomization
 namespace: ai-finops
 
 resources:
+  # Core infrastructure
   - namespace.yaml
+  - network-policies.yaml
+  - resource-quotas.yaml
+
+  # Metrics collection
   - dcgm-exporter.yaml
   - prometheus.yaml
+  - alertmanager.yaml
+
+  # Cost analysis
   - opencost.yaml
   - gpu-enricher.yaml
+  - infracost.yaml
+
+  # Visualization
   - grafana.yaml
   - grafana-dashboards.yaml
+
+  # Secrets management (optional - requires ESO installed)
+  # - external-secrets.yaml
 
 commonLabels:
   app.kubernetes.io/part-of: ai-finops-platform

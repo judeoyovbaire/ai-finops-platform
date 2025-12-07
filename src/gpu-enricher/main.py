@@ -9,7 +9,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import requests
@@ -163,6 +163,34 @@ class Recommendation:
     description: str
     potential_savings_daily: float
     affected_resources: list
+
+
+@dataclass
+class TeamBudget:
+    """Budget configuration for a team."""
+
+    team: str
+    monthly_budget: float
+    alert_threshold_pct: float = 80.0  # Alert at 80% of budget
+    critical_threshold_pct: float = 95.0  # Critical at 95%
+
+
+@dataclass
+class BudgetForecast:
+    """Budget forecast for a team."""
+
+    team: str
+    current_spend: float
+    monthly_budget: float
+    days_elapsed: int
+    days_remaining: int
+    daily_avg_spend: float
+    projected_eom_spend: float
+    budget_remaining: float
+    burn_rate_pct: float  # Daily % of budget being consumed
+    days_until_exhaustion: Optional[float]
+    status: str  # on_track, warning, critical, exceeded
+    trend: str  # increasing, stable, decreasing
 
 
 # =============================================================================
@@ -700,6 +728,719 @@ def gpu_utilization():
         )
     except Exception as e:
         logger.error(f"Error getting GPU utilization: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# Budget and Forecasting Endpoints
+# =============================================================================
+
+# Default team budgets (would typically come from config or database)
+DEFAULT_TEAM_BUDGETS = {
+    "ml-platform": TeamBudget(team="ml-platform", monthly_budget=5000.0),
+    "data-science": TeamBudget(team="data-science", monthly_budget=3000.0),
+    "research": TeamBudget(team="research", monthly_budget=4000.0),
+}
+
+
+def calculate_budget_forecast(
+    team: str,
+    daily_cost: float,
+    budget: TeamBudget,
+) -> BudgetForecast:
+    """Calculate budget forecast for a team."""
+    now = datetime.now(timezone.utc)
+    days_in_month = (
+        (now.replace(month=now.month % 12 + 1, day=1) - now.replace(day=1)).days
+        if now.month < 12
+        else 31
+    )
+    days_elapsed = now.day
+    days_remaining = days_in_month - days_elapsed
+
+    # Calculate current spend (estimated from daily rate)
+    current_spend = daily_cost * days_elapsed
+    daily_avg_spend = current_spend / max(days_elapsed, 1)
+
+    # Project end of month spend
+    projected_eom_spend = current_spend + (daily_cost * days_remaining)
+
+    # Budget calculations
+    budget_remaining = budget.monthly_budget - current_spend
+    burn_rate_pct = (daily_cost / budget.monthly_budget) * 100 * days_in_month
+
+    # Days until exhaustion
+    days_until_exhaustion = None
+    if daily_cost > 0:
+        days_until_exhaustion = budget_remaining / daily_cost
+        if days_until_exhaustion < 0:
+            days_until_exhaustion = 0
+
+    # Determine status
+    spend_pct = (current_spend / budget.monthly_budget) * 100
+    expected_pct = (days_elapsed / days_in_month) * 100
+
+    if current_spend > budget.monthly_budget:
+        status = "exceeded"
+    elif spend_pct > budget.critical_threshold_pct:
+        status = "critical"
+    elif spend_pct > budget.alert_threshold_pct:
+        status = "warning"
+    elif spend_pct > expected_pct * 1.1:  # 10% over expected
+        status = "warning"
+    else:
+        status = "on_track"
+
+    # Determine trend (simplified - would use historical data in production)
+    if projected_eom_spend > budget.monthly_budget * 1.1:
+        trend = "increasing"
+    elif projected_eom_spend < budget.monthly_budget * 0.9:
+        trend = "decreasing"
+    else:
+        trend = "stable"
+
+    return BudgetForecast(
+        team=team,
+        current_spend=round(current_spend, 2),
+        monthly_budget=budget.monthly_budget,
+        days_elapsed=days_elapsed,
+        days_remaining=days_remaining,
+        daily_avg_spend=round(daily_avg_spend, 2),
+        projected_eom_spend=round(projected_eom_spend, 2),
+        budget_remaining=round(budget_remaining, 2),
+        burn_rate_pct=round(burn_rate_pct, 1),
+        days_until_exhaustion=round(days_until_exhaustion, 1) if days_until_exhaustion else None,
+        status=status,
+        trend=trend,
+    )
+
+
+@app.route("/api/v1/budget/forecast")
+def budget_forecast():
+    """Get budget forecast for all teams.
+
+    Returns:
+        JSON with budget forecasts including projected spend and status.
+    """
+    if enricher is None:
+        return jsonify({"error": "Enricher not initialized"}), 503
+
+    try:
+        summary = enricher.get_cost_summary()
+        forecasts = []
+
+        for team, team_data in summary.get("teams", {}).items():
+            # Get budget for team (use default if not configured)
+            budget = DEFAULT_TEAM_BUDGETS.get(
+                team,
+                TeamBudget(team=team, monthly_budget=5000.0),  # Default budget
+            )
+
+            forecast = calculate_budget_forecast(
+                team=team,
+                daily_cost=team_data["total_cost_daily"],
+                budget=budget,
+            )
+
+            forecasts.append({
+                "team": forecast.team,
+                "current_spend": forecast.current_spend,
+                "monthly_budget": forecast.monthly_budget,
+                "budget_remaining": forecast.budget_remaining,
+                "days_elapsed": forecast.days_elapsed,
+                "days_remaining": forecast.days_remaining,
+                "daily_avg_spend": forecast.daily_avg_spend,
+                "projected_eom_spend": forecast.projected_eom_spend,
+                "burn_rate_pct": forecast.burn_rate_pct,
+                "days_until_exhaustion": forecast.days_until_exhaustion,
+                "status": forecast.status,
+                "trend": forecast.trend,
+            })
+
+        # Sort by status severity
+        status_order = {"exceeded": 0, "critical": 1, "warning": 2, "on_track": 3}
+        forecasts.sort(key=lambda x: status_order.get(x["status"], 4))
+
+        # Calculate totals
+        total_budget = sum(f["monthly_budget"] for f in forecasts)
+        total_spend = sum(f["current_spend"] for f in forecasts)
+        total_projected = sum(f["projected_eom_spend"] for f in forecasts)
+
+        return jsonify({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "totals": {
+                "monthly_budget": round(total_budget, 2),
+                "current_spend": round(total_spend, 2),
+                "projected_eom_spend": round(total_projected, 2),
+                "budget_remaining": round(total_budget - total_spend, 2),
+            },
+            "forecasts": forecasts,
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting budget forecast: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/v1/budget/forecast/<team>")
+def team_budget_forecast(team: str):
+    """Get budget forecast for a specific team.
+
+    Args:
+        team: Team name
+
+    Returns:
+        JSON with detailed budget forecast for the team.
+    """
+    if enricher is None:
+        return jsonify({"error": "Enricher not initialized"}), 503
+
+    try:
+        summary = enricher.get_cost_summary()
+        if team not in summary.get("teams", {}):
+            return jsonify({"error": f"Team '{team}' not found"}), 404
+
+        team_data = summary["teams"][team]
+        budget = DEFAULT_TEAM_BUDGETS.get(
+            team,
+            TeamBudget(team=team, monthly_budget=5000.0),
+        )
+
+        forecast = calculate_budget_forecast(
+            team=team,
+            daily_cost=team_data["total_cost_daily"],
+            budget=budget,
+        )
+
+        return jsonify({
+            "team": forecast.team,
+            "current_spend": forecast.current_spend,
+            "monthly_budget": forecast.monthly_budget,
+            "budget_remaining": forecast.budget_remaining,
+            "days_elapsed": forecast.days_elapsed,
+            "days_remaining": forecast.days_remaining,
+            "daily_avg_spend": forecast.daily_avg_spend,
+            "projected_eom_spend": forecast.projected_eom_spend,
+            "burn_rate_pct": forecast.burn_rate_pct,
+            "days_until_exhaustion": forecast.days_until_exhaustion,
+            "status": forecast.status,
+            "trend": forecast.trend,
+            "thresholds": {
+                "alert_pct": budget.alert_threshold_pct,
+                "critical_pct": budget.critical_threshold_pct,
+            },
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting team budget forecast: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/v1/budget/alerts")
+def budget_alerts():
+    """Get active budget alerts.
+
+    Returns:
+        JSON with teams that are over budget or at risk.
+    """
+    if enricher is None:
+        return jsonify({"error": "Enricher not initialized"}), 503
+
+    try:
+        summary = enricher.get_cost_summary()
+        alerts = []
+
+        for team, team_data in summary.get("teams", {}).items():
+            budget = DEFAULT_TEAM_BUDGETS.get(
+                team,
+                TeamBudget(team=team, monthly_budget=5000.0),
+            )
+
+            forecast = calculate_budget_forecast(
+                team=team,
+                daily_cost=team_data["total_cost_daily"],
+                budget=budget,
+            )
+
+            if forecast.status in ("exceeded", "critical", "warning"):
+                alerts.append({
+                    "team": team,
+                    "status": forecast.status,
+                    "current_spend": forecast.current_spend,
+                    "monthly_budget": forecast.monthly_budget,
+                    "projected_eom_spend": forecast.projected_eom_spend,
+                    "days_until_exhaustion": forecast.days_until_exhaustion,
+                    "message": _get_alert_message(forecast),
+                })
+
+        # Sort by severity
+        status_order = {"exceeded": 0, "critical": 1, "warning": 2}
+        alerts.sort(key=lambda x: status_order.get(x["status"], 3))
+
+        return jsonify({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "alerts": alerts,
+            "count": len(alerts),
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting budget alerts: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def _get_alert_message(forecast: BudgetForecast) -> str:
+    """Generate human-readable alert message."""
+    if forecast.status == "exceeded":
+        return (
+            f"Team {forecast.team} has exceeded monthly budget by "
+            f"${abs(forecast.budget_remaining):.2f}"
+        )
+    elif forecast.status == "critical":
+        return (
+            f"Team {forecast.team} is at {100 - (forecast.budget_remaining / forecast.monthly_budget * 100):.0f}% "
+            f"of monthly budget with {forecast.days_remaining} days remaining"
+        )
+    elif forecast.status == "warning":
+        if forecast.days_until_exhaustion and forecast.days_until_exhaustion < forecast.days_remaining:
+            return (
+                f"Team {forecast.team} may exhaust budget in "
+                f"{forecast.days_until_exhaustion:.0f} days at current rate"
+            )
+        return (
+            f"Team {forecast.team} projected to spend ${forecast.projected_eom_spend:.2f} "
+            f"(budget: ${forecast.monthly_budget:.2f})"
+        )
+    return ""
+
+
+@app.route("/api/v1/trends/costs")
+def cost_trends():
+    """Get historical cost trends.
+
+    Query params:
+        team: Filter by team (optional)
+        period: Time period - 7d, 30d, 90d (default: 7d)
+
+    Returns:
+        JSON with cost trend data.
+    """
+    if enricher is None:
+        return jsonify({"error": "Enricher not initialized"}), 503
+
+    try:
+        team_filter = request.args.get("team")
+        period = request.args.get("period", "7d")
+
+        # Query Prometheus for historical data
+        query = f"ai_finops_team_cost_daily[{period}]"
+        if team_filter:
+            query = f'ai_finops_team_cost_daily{{team="{team_filter}"}}[{period}]'
+
+        # Note: In production, use query_range for better time series data
+        # This is a simplified version using instant query
+        results = enricher.query_prometheus(
+            f"avg_over_time({query})",
+            "trends"
+        )
+
+        trends = []
+        for result in results:
+            team = result.get("metric", {}).get("team", "unknown")
+            avg_cost = float(result.get("value", [0, 0])[1])
+            trends.append({
+                "team": team,
+                "period": period,
+                "avg_daily_cost": round(avg_cost, 2),
+            })
+
+        return jsonify({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "period": period,
+            "trends": trends,
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting cost trends: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# Phase 3: Advanced Analytics Endpoints
+# =============================================================================
+
+# Lazy imports for Phase 3 modules
+_anomaly_detector = None
+_rightsizing_engine = None
+_billing_integration = None
+_report_generator = None
+
+
+def get_anomaly_detector():
+    """Lazy load anomaly detector."""
+    global _anomaly_detector
+    if _anomaly_detector is None:
+        try:
+            from anomaly import anomaly_detector
+            _anomaly_detector = anomaly_detector
+        except ImportError:
+            logger.warning("Anomaly detection module not available")
+    return _anomaly_detector
+
+
+def get_rightsizing_engine():
+    """Lazy load rightsizing engine."""
+    global _rightsizing_engine
+    if _rightsizing_engine is None:
+        try:
+            from rightsizing import rightsizing_engine
+            _rightsizing_engine = rightsizing_engine
+        except ImportError:
+            logger.warning("Rightsizing module not available")
+    return _rightsizing_engine
+
+
+def get_billing_integration():
+    """Lazy load billing integration."""
+    global _billing_integration
+    if _billing_integration is None:
+        try:
+            from billing import billing_integration, initialize_billing
+            initialize_billing()
+            _billing_integration = billing_integration
+        except ImportError:
+            logger.warning("Billing integration module not available")
+    return _billing_integration
+
+
+def get_report_generator():
+    """Lazy load report generator."""
+    global _report_generator
+    if _report_generator is None:
+        try:
+            from reports import report_generator
+            _report_generator = report_generator
+        except ImportError:
+            logger.warning("Report generation module not available")
+    return _report_generator
+
+
+@app.route("/api/v1/anomalies")
+def get_anomalies():
+    """Get detected cost and utilization anomalies.
+
+    Query params:
+        team: Filter by team (optional)
+        severity: Filter by severity (optional)
+
+    Returns:
+        JSON with list of detected anomalies.
+    """
+    if enricher is None:
+        return jsonify({"error": "Enricher not initialized"}), 503
+
+    detector = get_anomaly_detector()
+    if detector is None:
+        return jsonify({"error": "Anomaly detection not available"}), 503
+
+    try:
+        summary = enricher.get_cost_summary()
+        gpu_metrics = enricher.get_gpu_metrics()
+
+        all_anomalies = []
+
+        for team, team_data in summary.get("teams", {}).items():
+            # Prepare metrics for anomaly detection
+            team_gpus = [
+                {
+                    "node": gpu.node,
+                    "gpu_id": gpu.gpu_id,
+                    "utilization": gpu.utilization,
+                    "temperature": gpu.temperature,
+                }
+                for gpu in gpu_metrics
+                if gpu.team == team
+            ]
+
+            metrics = {
+                "current_cost": team_data["total_cost_daily"],
+                "historical_costs": [],  # Would come from Prometheus in production
+                "gpus": team_gpus,
+                "efficiency": team_data.get("avg_utilization", 0),
+                "historical_efficiency": [],
+            }
+
+            anomalies = detector.run_all_detections(team, metrics)
+            all_anomalies.extend([a.to_dict() for a in anomalies])
+
+        # Apply filters
+        team_filter = request.args.get("team")
+        severity_filter = request.args.get("severity")
+
+        if team_filter:
+            all_anomalies = [a for a in all_anomalies if a["team"] == team_filter]
+        if severity_filter:
+            all_anomalies = [a for a in all_anomalies if a["severity"] == severity_filter]
+
+        return jsonify({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "anomalies": all_anomalies,
+            "count": len(all_anomalies),
+        })
+
+    except Exception as e:
+        logger.error(f"Error detecting anomalies: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/v1/rightsizing")
+def get_rightsizing_recommendations():
+    """Get automated right-sizing recommendations.
+
+    Query params:
+        team: Filter by team (optional)
+        min_savings: Minimum daily savings threshold (optional)
+
+    Returns:
+        JSON with right-sizing recommendations.
+    """
+    if enricher is None:
+        return jsonify({"error": "Enricher not initialized"}), 503
+
+    engine = get_rightsizing_engine()
+    if engine is None:
+        return jsonify({"error": "Rightsizing engine not available"}), 503
+
+    try:
+        gpu_metrics = enricher.get_gpu_metrics()
+
+        # Group GPUs by team
+        team_gpus: dict[str, list] = {}
+        for gpu in gpu_metrics:
+            team = gpu.team
+            if team not in team_gpus:
+                team_gpus[team] = []
+            team_gpus[team].append({
+                "node": gpu.node,
+                "gpu_id": gpu.gpu_id,
+                "instance_type": gpu.instance_type,
+                "utilization": gpu.utilization,
+                "memory_util": gpu.memory_util,
+                "spot_tolerant": False,  # Would come from labels
+            })
+
+        all_recommendations = []
+        for team, gpus in team_gpus.items():
+            recs = engine.analyze_team(team, gpus)
+            all_recommendations.extend([r.to_dict() for r in recs])
+
+        # Apply filters
+        team_filter = request.args.get("team")
+        min_savings = request.args.get("min_savings", type=float, default=0)
+
+        if team_filter:
+            all_recommendations = [r for r in all_recommendations if r["team"] == team_filter]
+        if min_savings > 0:
+            all_recommendations = [r for r in all_recommendations if r["savings_daily"] >= min_savings]
+
+        # Generate summary
+        summary = {
+            "total_recommendations": len(all_recommendations),
+            "potential_savings_daily": sum(r["savings_daily"] for r in all_recommendations if r["savings_daily"] > 0),
+            "potential_savings_monthly": sum(r["savings_daily"] for r in all_recommendations if r["savings_daily"] > 0) * 30,
+        }
+
+        return jsonify({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "summary": summary,
+            "recommendations": all_recommendations,
+        })
+
+    except Exception as e:
+        logger.error(f"Error generating rightsizing recommendations: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/v1/billing/actual")
+def get_actual_billing():
+    """Get actual billing data from cloud provider.
+
+    Query params:
+        days: Number of days to fetch (default: 30)
+
+    Returns:
+        JSON with actual billing data by team.
+    """
+    billing = get_billing_integration()
+    if billing is None or not billing.is_enabled:
+        return jsonify({
+            "error": "Billing integration not available",
+            "message": "Set ENABLE_AWS_BILLING=true and configure AWS credentials",
+        }), 503
+
+    try:
+        days = request.args.get("days", type=int, default=30)
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days)
+
+        actual_costs = billing.get_actual_costs(start_date, end_date)
+
+        return jsonify({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "period": {
+                "start": start_date.isoformat(),
+                "end": end_date.isoformat(),
+                "days": days,
+            },
+            "teams": {
+                team: data.to_dict()
+                for team, data in actual_costs.items()
+            },
+        })
+
+    except Exception as e:
+        logger.error(f"Error fetching actual billing: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/v1/billing/comparison")
+def get_billing_comparison():
+    """Compare estimated costs with actual billing.
+
+    Returns:
+        JSON with cost comparison and variance analysis.
+    """
+    if enricher is None:
+        return jsonify({"error": "Enricher not initialized"}), 503
+
+    billing = get_billing_integration()
+    if billing is None or not billing.is_enabled:
+        return jsonify({
+            "error": "Billing integration not available",
+            "message": "Set ENABLE_AWS_BILLING=true and configure AWS credentials",
+        }), 503
+
+    try:
+        summary = enricher.get_cost_summary()
+        estimated_costs = {
+            team: data["total_cost_daily"]
+            for team, data in summary.get("teams", {}).items()
+        }
+
+        comparison = billing.get_cost_comparison(estimated_costs)
+
+        return jsonify({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **comparison,
+        })
+
+    except Exception as e:
+        logger.error(f"Error comparing billing: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/v1/reports/chargeback")
+def generate_chargeback_report():
+    """Generate chargeback report.
+
+    Query params:
+        format: Report format - csv, pdf, json (default: csv)
+
+    Returns:
+        Report file in requested format.
+    """
+    if enricher is None:
+        return jsonify({"error": "Enricher not initialized"}), 503
+
+    try:
+        from reports import generate_monthly_chargeback_report
+
+        report_format = request.args.get("format", "csv").lower()
+        if report_format not in ("csv", "pdf", "json"):
+            return jsonify({"error": f"Unsupported format: {report_format}"}), 400
+
+        # Get cost data
+        summary = enricher.get_cost_summary()
+        recommendations = enricher.get_recommendations()
+
+        # Get anomalies if available
+        anomalies = []
+        detector = get_anomaly_detector()
+        if detector:
+            # Simplified anomaly detection for report
+            pass
+
+        # Generate report
+        content, content_type, filename = generate_monthly_chargeback_report(
+            team_data=summary.get("teams", {}),
+            recommendations=recommendations,
+            anomalies=anomalies,
+            format=report_format,
+        )
+
+        from flask import Response
+        response = Response(content, mimetype=content_type)
+        response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+        return response
+
+    except ImportError:
+        return jsonify({
+            "error": "Report generation not available",
+            "message": "Install reportlab for PDF support",
+        }), 503
+    except Exception as e:
+        logger.error(f"Error generating report: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/v1/reports/chargeback/preview")
+def preview_chargeback_report():
+    """Preview chargeback report data without generating file.
+
+    Returns:
+        JSON with report data preview.
+    """
+    if enricher is None:
+        return jsonify({"error": "Enricher not initialized"}), 503
+
+    try:
+        summary = enricher.get_cost_summary()
+        recommendations = enricher.get_recommendations()
+
+        now = datetime.now(timezone.utc)
+        start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        team_reports = []
+        for team, data in summary.get("teams", {}).items():
+            team_reports.append({
+                "team": team,
+                "gpu_cost_mtd": round(data.get("gpu_cost_daily", 0) * now.day, 2),
+                "k8s_cost_mtd": round(data.get("k8s_cost_daily", 0) * now.day, 2),
+                "total_cost_mtd": round(data.get("total_cost_daily", 0) * now.day, 2),
+                "gpu_count": data.get("gpu_count", 0),
+                "avg_utilization": data.get("avg_utilization", 0),
+                "idle_gpu_hours": data.get("idle_gpu_hours", 0),
+            })
+
+        return jsonify({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "period": {
+                "start": start_of_month.isoformat(),
+                "end": now.isoformat(),
+                "days": now.day,
+            },
+            "summary": {
+                "total_cost_mtd": sum(t["total_cost_mtd"] for t in team_reports),
+                "total_gpu_cost_mtd": sum(t["gpu_cost_mtd"] for t in team_reports),
+                "total_k8s_cost_mtd": sum(t["k8s_cost_mtd"] for t in team_reports),
+                "teams": len(team_reports),
+            },
+            "teams": team_reports,
+            "recommendations_count": len(recommendations),
+            "available_formats": ["csv", "pdf", "json"],
+        })
+
+    except Exception as e:
+        logger.error(f"Error previewing report: {e}")
         return jsonify({"error": str(e)}), 500
 
 

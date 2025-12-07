@@ -1,0 +1,476 @@
+# Thanos Multi-Cluster Aggregation for AI FinOps Platform
+#
+# Thanos provides:
+# - Long-term metric storage (S3/GCS/Azure Blob)
+# - Global query view across clusters
+# - Metric deduplication
+# - Downsampling for efficient storage
+#
+# Architecture:
+# - Thanos Sidecar: Runs alongside Prometheus, uploads blocks to object storage
+# - Thanos Query: Provides unified query interface across all Prometheus instances
+# - Thanos Store: Serves historical data from object storage
+# - Thanos Compactor: Compacts and downsamples data
+# - Thanos Ruler: Evaluates recording/alerting rules globally
+
+---
+# Thanos Object Storage Configuration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: thanos-objstore-config
+  namespace: ai-finops
+type: Opaque
+stringData:
+  objstore.yml: |
+    type: S3
+    config:
+      bucket: ai-finops-thanos-metrics
+      endpoint: s3.us-west-2.amazonaws.com
+      region: us-west-2
+      # Use IRSA (IAM Roles for Service Accounts) in production
+      # access_key and secret_key should be provided via ESO
+      access_key: ${AWS_ACCESS_KEY_ID}
+      secret_key: ${AWS_SECRET_ACCESS_KEY}
+      insecure: false
+      signature_version2: false
+      put_user_metadata: {}
+      http_config:
+        idle_conn_timeout: 1m30s
+        response_header_timeout: 2m
+        insecure_skip_verify: false
+      trace:
+        enable: false
+      part_size: 134217728  # 128MB
+
+---
+# Thanos Sidecar - Runs alongside Prometheus
+# Already integrated in prometheus.yaml as a sidecar container
+
+---
+# Thanos Query - Global Query Interface
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: thanos-query
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: thanos-query
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: thanos-query
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: thanos-query
+    spec:
+      containers:
+        - name: thanos-query
+          image: quay.io/thanos/thanos:v0.40.1
+          args:
+            - query
+            - --log.level=info
+            - --log.format=logfmt
+            - --query.replica-label=prometheus_replica
+            - --query.replica-label=cluster
+            - --query.auto-downsampling
+            # Connect to Prometheus sidecars and Store Gateway
+            - --endpoint=dnssrv+_grpc._tcp.thanos-sidecar.ai-finops.svc.cluster.local
+            - --endpoint=dnssrv+_grpc._tcp.thanos-store.ai-finops.svc.cluster.local
+            # Enable partial response for availability
+            - --query.partial-response
+          ports:
+            - name: http
+              containerPort: 10902
+            - name: grpc
+              containerPort: 10901
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: thanos-query
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: thanos-query
+spec:
+  type: ClusterIP
+  ports:
+    - port: 10902
+      targetPort: http
+      name: http
+    - port: 10901
+      targetPort: grpc
+      name: grpc
+  selector:
+    app.kubernetes.io/name: thanos-query
+
+---
+# Thanos Store Gateway - Serves data from object storage
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: thanos-store
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: thanos-store
+spec:
+  replicas: 1
+  serviceName: thanos-store
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: thanos-store
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: thanos-store
+    spec:
+      containers:
+        - name: thanos-store
+          image: quay.io/thanos/thanos:v0.40.1
+          args:
+            - store
+            - --log.level=info
+            - --log.format=logfmt
+            - --data-dir=/var/thanos/store
+            - --objstore.config-file=/etc/thanos/objstore.yml
+            - --index-cache-size=500MB
+            - --chunk-pool-size=500MB
+          ports:
+            - name: http
+              containerPort: 10902
+            - name: grpc
+              containerPort: 10901
+          volumeMounts:
+            - name: objstore-config
+              mountPath: /etc/thanos
+            - name: data
+              mountPath: /var/thanos/store
+          resources:
+            requests:
+              cpu: 200m
+              memory: 1Gi
+            limits:
+              cpu: "1"
+              memory: 4Gi
+
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+      volumes:
+        - name: objstore-config
+          secret:
+            secretName: thanos-objstore-config
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 50Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: thanos-store
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: thanos-store
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless for StatefulSet
+  ports:
+    - port: 10902
+      targetPort: http
+      name: http
+    - port: 10901
+      targetPort: grpc
+      name: grpc
+  selector:
+    app.kubernetes.io/name: thanos-store
+
+---
+# Thanos Compactor - Compacts and downsamples data
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: thanos-compactor
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: thanos-compactor
+spec:
+  replicas: 1
+  serviceName: thanos-compactor
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: thanos-compactor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: thanos-compactor
+    spec:
+      containers:
+        - name: thanos-compactor
+          image: quay.io/thanos/thanos:v0.40.1
+          args:
+            - compact
+            - --log.level=info
+            - --log.format=logfmt
+            - --data-dir=/var/thanos/compactor
+            - --objstore.config-file=/etc/thanos/objstore.yml
+            - --retention.resolution-raw=30d
+            - --retention.resolution-5m=90d
+            - --retention.resolution-1h=365d
+            - --compact.concurrency=1
+            - --downsample.concurrency=1
+            - --deduplication.replica-label=prometheus_replica
+            - --deduplication.replica-label=cluster
+            - --wait
+          ports:
+            - name: http
+              containerPort: 10902
+          volumeMounts:
+            - name: objstore-config
+              mountPath: /etc/thanos
+            - name: data
+              mountPath: /var/thanos/compactor
+          resources:
+            requests:
+              cpu: 200m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 60
+
+      volumes:
+        - name: objstore-config
+          secret:
+            secretName: thanos-objstore-config
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 100Gi
+
+---
+# Thanos Ruler - Global alerting and recording rules
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: thanos-ruler
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: thanos-ruler
+spec:
+  replicas: 1
+  serviceName: thanos-ruler
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: thanos-ruler
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: thanos-ruler
+    spec:
+      containers:
+        - name: thanos-ruler
+          image: quay.io/thanos/thanos:v0.40.1
+          args:
+            - rule
+            - --log.level=info
+            - --log.format=logfmt
+            - --data-dir=/var/thanos/ruler
+            - --objstore.config-file=/etc/thanos/objstore.yml
+            - --rule-file=/etc/thanos-rules/*.yaml
+            - --query=thanos-query:10902
+            - --alertmanagers.url=http://alertmanager:9093
+            - --label=ruler_cluster="primary"
+            - --label=ruler_replica="$(POD_NAME)"
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: http
+              containerPort: 10902
+            - name: grpc
+              containerPort: 10901
+          volumeMounts:
+            - name: objstore-config
+              mountPath: /etc/thanos
+            - name: rules
+              mountPath: /etc/thanos-rules
+            - name: data
+              mountPath: /var/thanos/ruler
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+
+      volumes:
+        - name: objstore-config
+          secret:
+            secretName: thanos-objstore-config
+        - name: rules
+          configMap:
+            name: thanos-ruler-rules
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp3
+        resources:
+          requests:
+            storage: 10Gi
+
+---
+# Thanos Ruler Rules - Global recording and alerting rules
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: thanos-ruler-rules
+  namespace: ai-finops
+data:
+  global-rules.yaml: |
+    groups:
+      - name: ai-finops-global
+        rules:
+          # Aggregate cost across all clusters
+          - record: ai_finops:total_cost_global
+            expr: |
+              sum by (team) (
+                ai_finops_team_cost_daily
+              )
+
+          # Global GPU utilization
+          - record: ai_finops:gpu_util_global
+            expr: |
+              avg by (team) (
+                DCGM_FI_DEV_GPU_UTIL
+              )
+
+          # Cross-cluster cost comparison
+          - record: ai_finops:cluster_cost_comparison
+            expr: |
+              sum by (cluster) (
+                ai_finops_team_cost_daily
+              )
+
+      - name: ai-finops-global-alerts
+        rules:
+          # Global budget alert
+          - alert: GlobalBudgetExceeded
+            expr: |
+              sum(ai_finops_team_cost_daily) > 10000
+            for: 1h
+            labels:
+              severity: critical
+            annotations:
+              summary: "Global daily cost exceeds $10,000"
+              description: "Total daily cost across all clusters is {{ $value | humanize }}"
+
+          # Cluster cost anomaly
+          - alert: ClusterCostAnomaly
+            expr: |
+              (
+                sum by (cluster) (ai_finops_team_cost_daily)
+                /
+                avg_over_time(sum by (cluster) (ai_finops_team_cost_daily)[7d:1h])
+              ) > 1.5
+            for: 2h
+            labels:
+              severity: warning
+            annotations:
+              summary: "Cluster {{ $labels.cluster }} cost is 50% above normal"
+
+---
+# Service Account for Thanos components with IRSA
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: thanos
+  namespace: ai-finops
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/ai-finops-thanos
+
+---
+# Headless service for Thanos Sidecar discovery
+apiVersion: v1
+kind: Service
+metadata:
+  name: thanos-sidecar
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: thanos-sidecar
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - port: 10901
+      targetPort: 10901
+      name: grpc
+  selector:
+    app.kubernetes.io/name: prometheus

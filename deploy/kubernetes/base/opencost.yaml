@@ -115,7 +115,7 @@ spec:
       serviceAccountName: opencost
       containers:
         - name: opencost
-          image: ghcr.io/opencost/opencost:1.113.0
+          image: ghcr.io/opencost/opencost:1.118.0
           ports:
             - containerPort: 9003
               name: http
@@ -162,7 +162,7 @@ spec:
 
         # OpenCost UI for visualization
         - name: opencost-ui
-          image: ghcr.io/opencost/opencost-ui:1.113.0
+          image: ghcr.io/opencost/opencost-ui:1.118.0
           ports:
             - containerPort: 9090
               name: ui

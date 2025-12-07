@@ -1,0 +1,329 @@
+# Alertmanager Configuration for AI FinOps Platform
+# Routes alerts to Slack, PagerDuty, and generic webhooks
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: ai-finops
+data:
+  alertmanager.yml: |
+    global:
+      # Default settings
+      resolve_timeout: 5m
+
+      # Slack configuration (uses secret)
+      slack_api_url_file: /etc/alertmanager/secrets/slack-webhook-url
+
+      # PagerDuty configuration
+      pagerduty_url: https://events.pagerduty.com/v2/enqueue
+
+    # Templates for notifications
+    templates:
+      - '/etc/alertmanager/templates/*.tmpl'
+
+    # Routing tree
+    route:
+      # Default receiver
+      receiver: 'slack-warnings'
+
+      # Group alerts by these labels
+      group_by: ['alertname', 'team', 'severity']
+
+      # Wait before sending grouped alerts
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+
+      # Child routes
+      routes:
+        # Critical alerts go to PagerDuty
+        - match:
+            severity: critical
+          receiver: 'pagerduty-critical'
+          continue: true  # Also send to Slack
+
+        # Critical also goes to Slack for visibility
+        - match:
+            severity: critical
+          receiver: 'slack-critical'
+
+        # High severity warnings
+        - match:
+            severity: warning
+          receiver: 'slack-warnings'
+
+        # Budget alerts get special handling
+        - match:
+            alertname: DailyBudgetExceeded
+          receiver: 'slack-budget'
+          group_wait: 1m
+          repeat_interval: 1h
+
+        - match:
+            alertname: TeamBudgetExceeded
+          receiver: 'slack-budget'
+          group_wait: 1m
+          repeat_interval: 2h
+
+        # Idle GPU alerts
+        - match:
+            alertname: GPUIdleHigh
+          receiver: 'slack-efficiency'
+          repeat_interval: 6h
+
+        # Generic webhook for custom integrations
+        - match:
+            send_webhook: "true"
+          receiver: 'generic-webhook'
+
+    # Receivers configuration
+    receivers:
+      # Slack for critical alerts
+      - name: 'slack-critical'
+        slack_configs:
+          - channel: '#finops-critical'
+            send_resolved: true
+            color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+            title: '{{ if eq .Status "firing" }}:rotating_light: CRITICAL{{ else }}:white_check_mark: Resolved{{ end }} - {{ .GroupLabels.alertname }}'
+            text: |
+              *Alert:* {{ .GroupLabels.alertname }}
+              *Severity:* {{ .CommonLabels.severity }}
+              *Team:* {{ .CommonLabels.team }}
+
+              {{ range .Alerts }}
+              *Description:* {{ .Annotations.description }}
+              *Value:* {{ .Annotations.value }}
+              {{ end }}
+
+              <{{ .ExternalURL }}/#/alerts|View in Alertmanager>
+            actions:
+              - type: button
+                text: 'View Dashboard'
+                url: 'http://grafana:3000/d/gpu-overview'
+              - type: button
+                text: 'Runbook'
+                url: 'https://wiki.example.com/runbooks/finops'
+
+      # Slack for warnings
+      - name: 'slack-warnings'
+        slack_configs:
+          - channel: '#finops-alerts'
+            send_resolved: true
+            color: '{{ if eq .Status "firing" }}warning{{ else }}good{{ end }}'
+            title: '{{ if eq .Status "firing" }}:warning: Warning{{ else }}:white_check_mark: Resolved{{ end }} - {{ .GroupLabels.alertname }}'
+            text: |
+              *Alert:* {{ .GroupLabels.alertname }}
+              *Team:* {{ .CommonLabels.team }}
+
+              {{ range .Alerts }}
+              {{ .Annotations.description }}
+              {{ end }}
+
+      # Slack for budget alerts
+      - name: 'slack-budget'
+        slack_configs:
+          - channel: '#finops-budget'
+            send_resolved: true
+            color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+            title: ':moneybag: Budget Alert - {{ .GroupLabels.alertname }}'
+            text: |
+              {{ range .Alerts }}
+              *{{ .Annotations.summary }}*
+
+              {{ .Annotations.description }}
+
+              *Current Spend:* ${{ .Annotations.value }}
+              {{ end }}
+
+              <{{ .ExternalURL }}/#/alerts|View Details>
+
+      # Slack for efficiency alerts
+      - name: 'slack-efficiency'
+        slack_configs:
+          - channel: '#finops-efficiency'
+            send_resolved: true
+            color: 'warning'
+            title: ':chart_with_downwards_trend: Efficiency Alert - {{ .GroupLabels.alertname }}'
+            text: |
+              {{ range .Alerts }}
+              *{{ .Annotations.summary }}*
+
+              {{ .Annotations.description }}
+
+              *Recommendation:* Consider scaling down or terminating idle resources.
+              {{ end }}
+
+      # PagerDuty for critical alerts
+      - name: 'pagerduty-critical'
+        pagerduty_configs:
+          - routing_key_file: /etc/alertmanager/secrets/pagerduty-routing-key
+            severity: '{{ .CommonLabels.severity }}'
+            description: '{{ .GroupLabels.alertname }}: {{ .CommonAnnotations.summary }}'
+            details:
+              firing: '{{ .Alerts.Firing | len }}'
+              resolved: '{{ .Alerts.Resolved | len }}'
+              team: '{{ .CommonLabels.team }}'
+
+      # Generic webhook for custom integrations
+      - name: 'generic-webhook'
+        webhook_configs:
+          - url_file: /etc/alertmanager/secrets/generic-webhook-url
+            send_resolved: true
+            http_config:
+              tls_config:
+                insecure_skip_verify: false
+
+    # Inhibition rules
+    inhibit_rules:
+      # If critical is firing, suppress warnings for same alertname
+      - source_match:
+          severity: 'critical'
+        target_match:
+          severity: 'warning'
+        equal: ['alertname', 'team']
+
+      # Suppress idle GPU alerts during maintenance windows
+      - source_match:
+          alertname: 'MaintenanceWindow'
+        target_match:
+          alertname: 'GPUIdleHigh'
+        equal: ['node']
+
+---
+# Alertmanager templates
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-templates
+  namespace: ai-finops
+data:
+  default.tmpl: |
+    {{ define "slack.default.title" }}
+    [{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .GroupLabels.alertname }}
+    {{ end }}
+
+    {{ define "slack.default.text" }}
+    {{ range .Alerts }}
+    *Alert:* {{ .Labels.alertname }}
+    *Severity:* {{ .Labels.severity }}
+    *Description:* {{ .Annotations.description }}
+    *Details:*
+    {{ range .Labels.SortedPairs }}  - {{ .Name }}: {{ .Value }}
+    {{ end }}
+    {{ end }}
+    {{ end }}
+
+    {{ define "pagerduty.default.description" }}
+    {{ .GroupLabels.alertname }}: {{ .CommonAnnotations.summary }}
+    {{ end }}
+
+---
+# Alertmanager Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: alertmanager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.29.0
+          args:
+            - '--config.file=/etc/alertmanager/alertmanager.yml'
+            - '--storage.path=/alertmanager'
+            - '--web.external-url=http://alertmanager:9093'
+            - '--cluster.listen-address='
+          ports:
+            - containerPort: 9093
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+            - name: templates
+              mountPath: /etc/alertmanager/templates
+            - name: secrets
+              mountPath: /etc/alertmanager/secrets
+              readOnly: true
+            - name: storage
+              mountPath: /alertmanager
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9093
+            initialDelaySeconds: 10
+            periodSeconds: 30
+
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9093
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+        - name: templates
+          configMap:
+            name: alertmanager-templates
+        - name: secrets
+          secret:
+            secretName: alertmanager-secrets
+            optional: true  # Allow deployment without secrets for local dev
+        - name: storage
+          emptyDir: {}
+
+---
+# Alertmanager Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: alertmanager
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9093
+      targetPort: 9093
+      name: http
+  selector:
+    app.kubernetes.io/name: alertmanager
+
+---
+# Default secrets for local development (override with ESO in production)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alertmanager-secrets
+  namespace: ai-finops
+  annotations:
+    description: "Default secrets for local development. Override with ExternalSecrets in production."
+type: Opaque
+stringData:
+  # Placeholder values - replace in production via ESO
+  slack-webhook-url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+  pagerduty-routing-key: "YOUR_PAGERDUTY_ROUTING_KEY"
+  generic-webhook-url: "https://your-webhook-endpoint.example.com/alerts"

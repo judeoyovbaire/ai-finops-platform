@@ -21,31 +21,45 @@ Organizations running AI/ML workloads face significant cost challenges:
 This platform provides comprehensive cost observability for AI infrastructure by combining [OpenCost](https://opencost.io/) for Kubernetes cost allocation with GPU-specific metrics from NVIDIA DCGM:
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                    AI FinOps Platform                          │
-├────────────────────────────────────────────────────────────────┤
-│                                                                │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
-│  │   NVIDIA    │  │  OpenCost   │  │     GPU Enricher        │ │
-│  │    DCGM     │  │   (CNCF)    │  │                         │ │
-│  │  Exporter   │  │             │  │  • Joins GPU + K8s      │ │
-│  │             │  │ • K8s costs │  │  • Idle detection       │ │
-│  │ • GPU util  │  │ • Cloud API │  │  • Spot recommendations │ │
-│  │ • Temp/Mem  │  │ • Namespace │  │  • REST API             │ │
-│  └──────┬──────┘  └──────┬──────┘  └───────────┬─────────────┘ │
-│         │                │                     │               │
-│         └────────────────┼─────────────────────┘               │
-│                          ▼                                     │
-│                   ┌─────────────┐                              │
-│                   │ Prometheus  │                              │
-│                   │   v3.0.1    │                              │
-│                   └──────┬──────┘                              │
-│                          ▼                                     │
-│                   ┌─────────────┐                              │
-│                   │   Grafana   │                              │
-│                   │   v11.4.0   │                              │
-│                   └─────────────┘                              │
-└────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                              AI FinOps Platform                                        │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────────────────────┐          │
+│  │   NVIDIA    │  │  OpenCost   │  │  Infracost  │  │     GPU Enricher      │          │
+│  │    DCGM     │  │   (CNCF)    │  │             │  │                       │          │
+│  │  Exporter   │  │             │  │ • Live      │  │ • Cost summary        │          │
+│  │             │  │ • K8s costs │  │   pricing   │  │ • Budget forecasting  │          │
+│  │ • GPU util  │  │ • Cloud API │  │ • Multi-    │  │ • Anomaly detection   │          │
+│  │ • Temp/Mem  │  │ • Namespace │  │   cloud     │  │ • Right-sizing        │          │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  │ • Chargeback reports  │          │
+│         │                │                │         └───────────┬───────────┘          │
+│         │                │                │                     │                      │
+│         └────────────────┴────────────────┴─────────────────────┤                      │
+│                                    │                            │                      │
+│                                    ▼                            │                      │
+│          ┌──────────────────────────────────────────┐           │                      │
+│          │              Prometheus v3.8.0           │           │                      │
+│          └─────────────────────┬────────────────────┘           │                      │
+│                                │                                │                      │
+│           ┌────────────────────┼────────────────────┐           │                      │
+│           │                    │                    │           │                      │
+│           ▼                    ▼                    ▼           │                      │
+│   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐     │  ┌────────────────┐  │
+│   │Alertmanager │      │   Grafana   │      │   Thanos    │     │  │ Cloud Billing  │  │
+│   │   v0.29.0   │      │   v12.3.0   │      │   v0.40.1   │     │  │      APIs      │  │
+│   └──────┬──────┘      └─────────────┘      │             │     │  ├────────────────┤  │
+│          │                                  │ • Query     │     │  │ • AWS Cost     │  │
+│          ▼                                  │ • Store     │     └─▶│   Explorer     │  │
+│   ┌─────────────┐                           │ • Compactor │        │ • GCP Billing  │  │
+│   │ Slack/PD/   │                           └──────┬──────┘        │ • Azure Cost   │  │
+│   │  Webhooks   │                                  │               └────────────────┘  │
+│   └─────────────┘                                  ▼                                   │
+│                                         ┌──────────────────┐                           │
+│                                         │  Object Storage  │                           │
+│                                         │ S3 / GCS / Blob  │                           │
+│                                         └──────────────────┘                           │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Key Outcomes
@@ -60,15 +74,47 @@ This platform provides comprehensive cost observability for AI infrastructure by
 
 ## Features
 
+### Core Features
 - **GPU Utilization Monitoring**: Real-time metrics via NVIDIA DCGM Exporter
 - **OpenCost Integration**: CNCF-backed Kubernetes cost allocation
 - **Cost-per-Inference Tracking**: Calculate actual cost for each model request
 - **Team/Project Attribution**: Label-based cost allocation and chargeback
 - **Idle Resource Detection**: Automatic alerts for underutilized GPUs
 - **Spot vs On-Demand Analysis**: Recommendations for instance optimization
-- **Budget Alerting**: Proactive notifications before budget breaches
-- **REST API**: Query costs and recommendations programmatically
+
+### Budget & Forecasting (Phase 2)
+- **Budget Forecasting**: Projected end-of-month spend with trend analysis
+- **Budget Alerts API**: Real-time budget status (on_track, warning, critical, exceeded)
+- **Historical Cost Trending**: 7-day, 30-day cost averages and trends
+- **Days Until Exhaustion**: Predictive budget exhaustion warnings
+
+### Alerting & Notifications (Phase 2)
+- **Alertmanager Integration**: Prometheus alerting with routing rules
+- **Slack Notifications**: Channel-based alerts by severity
+- **PagerDuty Integration**: Critical alerts with escalation
+- **Generic Webhooks**: Custom integration support
+
+### Security (Phase 2)
+- **NetworkPolicies**: Zero-trust network isolation between services
+- **External Secrets Operator**: AWS Secrets Manager integration
+- **Resource Quotas**: Namespace-level resource limits
+
+### Analytics & Intelligence (Phase 3)
+- **ML-Based Anomaly Detection**: Statistical analysis using Z-score, IQR, and Moving Average methods to detect cost spikes, utilization anomalies, and efficiency degradation
+- **Automated Right-Sizing**: GPU instance recommendations based on utilization patterns (downsize, upsize, terminate, spot migration)
+- **AWS Cost Explorer Integration**: Actual billing data from cloud provider for cost comparison and accuracy validation
+- **Chargeback Reports**: Automated generation of cost allocation reports in CSV, PDF, and JSON formats
+
+### Multi-Cluster (Phase 3)
+- **Thanos Integration**: Long-term metric storage with S3/GCS backend
+- **Global Query View**: Unified queries across multiple Kubernetes clusters
+- **Metric Deduplication**: Automatic deduplication across Prometheus replicas
+- **Downsampling**: Efficient storage with configurable retention (30d raw, 90d 5m, 365d 1h)
+
+### Infrastructure
+- **REST API**: Query costs, recommendations, and forecasts programmatically
 - **Grafana Dashboards**: Pre-built visualizations for all metrics
+- **Multi-cloud Pricing**: Infracost integration for live pricing (AWS, GCP, Azure)
 
 ## Architecture
 
@@ -76,11 +122,16 @@ This platform provides comprehensive cost observability for AI infrastructure by
 
 | Component | Technology | Version | Purpose |
 |-----------|------------|---------|---------|
-| GPU Metrics | NVIDIA DCGM Exporter | 3.3.9 | Collect GPU utilization, memory, temperature |
-| K8s Costs | OpenCost | 1.113.0 | Kubernetes resource cost allocation |
+| GPU Metrics | NVIDIA DCGM Exporter | 4.4.2 | Collect GPU utilization, memory, temperature |
+| K8s Costs | OpenCost | 1.118.0 | Kubernetes resource cost allocation |
 | GPU Enricher | Python/Flask | 3.12 | Enrich OpenCost with GPU metrics, provide API |
-| Metrics Storage | Prometheus | 3.0.1 | Time-series database for all metrics |
-| Visualization | Grafana | 11.4.0 | Dashboards and alerting |
+| Metrics Storage | Prometheus | 3.8.0 | Time-series database for all metrics |
+| Alerting | Alertmanager | 0.29.0 | Alert routing to Slack/PagerDuty/Webhooks |
+| Visualization | Grafana | 12.3.0 | Dashboards and alerting |
+| Pricing | Infracost | - | Multi-cloud GPU pricing API |
+| Secrets | External Secrets Operator | - | AWS Secrets Manager integration |
+| Multi-Cluster | Thanos | 0.40.1 | Long-term storage, global queries, deduplication |
+| Billing | AWS Cost Explorer | - | Actual cloud billing data integration |
 
 ### Metrics Collected
 
@@ -136,6 +187,7 @@ ai-finops-platform/
 │       │   ├── prometheus.yaml     # Prometheus with alert rules
 │       │   ├── grafana.yaml        # Grafana with datasources
 │       │   ├── grafana-dashboards.yaml
+│       │   ├── thanos.yaml         # Multi-cluster aggregation (Phase 3)
 │       │   └── kustomization.yaml
 │       └── overlays/
 │           ├── local/              # Local/Kind with mock metrics
@@ -149,6 +201,10 @@ ai-finops-platform/
 ├── src/
 │   └── gpu-enricher/               # GPU cost enrichment service
 │       ├── main.py                 # Flask application
+│       ├── anomaly.py              # ML-based anomaly detection (Phase 3)
+│       ├── rightsizing.py          # Right-sizing recommendations (Phase 3)
+│       ├── billing.py              # AWS Cost Explorer integration (Phase 3)
+│       ├── reports.py              # Chargeback report generation (Phase 3)
 │       ├── test_main.py            # Unit tests (50+ tests)
 │       ├── requirements.txt
 │       └── Dockerfile
@@ -207,6 +263,8 @@ make status
 
 The GPU Enricher provides a REST API:
 
+**Core Endpoints:**
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Health check |
@@ -217,6 +275,26 @@ The GPU Enricher provides a REST API:
 | `/api/v1/recommendations` | GET | Optimization recommendations |
 | `/api/v1/gpu/utilization` | GET | Current GPU utilization |
 
+**Budget & Forecasting Endpoints (Phase 2):**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/budget/forecast` | GET | Budget forecast for all teams |
+| `/api/v1/budget/forecast/<team>` | GET | Budget forecast for specific team |
+| `/api/v1/budget/alerts` | GET | Active budget alerts |
+| `/api/v1/trends/costs` | GET | Historical cost trends (7d, 30d, 90d) |
+
+**Analytics & Intelligence Endpoints (Phase 3):**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/anomalies` | GET | Detected cost/utilization anomalies |
+| `/api/v1/rightsizing` | GET | GPU right-sizing recommendations |
+| `/api/v1/billing/actual` | GET | Actual costs from AWS Cost Explorer |
+| `/api/v1/billing/comparison` | GET | Estimated vs actual cost comparison |
+| `/api/v1/reports/chargeback` | GET | Generate chargeback report (CSV/PDF/JSON) |
+| `/api/v1/reports/chargeback/preview` | GET | Preview chargeback report data |
+
 Example:
 ```bash
 # Get cost summary
@@ -224,6 +302,24 @@ curl http://localhost:8080/api/v1/costs/summary
 
 # Get recommendations (filter by severity)
 curl http://localhost:8080/api/v1/recommendations?severity=high
+
+# Get budget forecast
+curl http://localhost:8080/api/v1/budget/forecast
+
+# Get cost trends (30-day period)
+curl http://localhost:8080/api/v1/trends/costs?period=30d
+
+# Get detected anomalies (Phase 3)
+curl http://localhost:8080/api/v1/anomalies
+
+# Get right-sizing recommendations (Phase 3)
+curl http://localhost:8080/api/v1/rightsizing
+
+# Compare estimated vs actual costs (Phase 3)
+curl http://localhost:8080/api/v1/billing/comparison
+
+# Generate chargeback report as CSV (Phase 3)
+curl "http://localhost:8080/api/v1/reports/chargeback?format=csv&period=monthly"
 ```
 
 ### Makefile Commands
@@ -347,19 +443,28 @@ groups:
 - [x] Unit tests (50+ test cases)
 - [x] Local development with mock metrics
 
-### Phase 2 - Enhanced
-- [ ] Spot vs on-demand automated recommendations
-- [ ] Historical cost trending and forecasting
-- [ ] Slack/email/PagerDuty notifications
-- [ ] Multi-cloud pricing API integration
-- [ ] Budget forecasting with ML
+### Phase 2 - Enhanced (Complete)
+- [x] Historical cost trending and forecasting (Prometheus recording rules)
+- [x] Slack/PagerDuty/Webhook notifications (Alertmanager)
+- [x] Multi-cloud pricing API integration (Infracost)
+- [x] Budget forecasting API endpoints
+- [x] NetworkPolicies for zero-trust security
+- [x] External Secrets Operator integration
+- [x] Resource quotas and LimitRanges
 
-### Phase 3 - Advanced
-- [ ] ML-based anomaly detection
-- [ ] Automated right-sizing recommendations
-- [ ] Cloud billing API integration (actual costs)
-- [ ] Chargeback report generation (PDF/CSV)
-- [ ] Multi-cluster aggregation (Thanos/Cortex)
+### Phase 3 - Advanced (Complete)
+- [x] ML-based anomaly detection (Z-score, IQR, Moving Average)
+- [x] Automated right-sizing recommendations
+- [x] Cloud billing API integration (AWS Cost Explorer)
+- [x] Chargeback report generation (PDF/CSV/JSON)
+- [x] Multi-cluster aggregation (Thanos)
+- [ ] CI/CD pipeline enablement
+
+### Future Enhancements
+- [ ] GCP Cloud Billing API integration
+- [ ] Azure Cost Management API integration
+- [ ] Custom ML models for cost prediction
+- [ ] Kubernetes Cost Allocation API (native)
 
 ## Integration with MLOps Platform
 

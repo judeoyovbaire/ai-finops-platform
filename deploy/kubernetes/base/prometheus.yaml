@@ -1,5 +1,5 @@
 # Prometheus Configuration for AI FinOps
-# Scrapes GPU metrics and cost calculator metrics
+# Scrapes GPU metrics, cost metrics, and forwards alerts to Alertmanager
 
 apiVersion: v1
 kind: ConfigMap
@@ -11,6 +11,16 @@ data:
     global:
       scrape_interval: 15s
       evaluation_interval: 15s
+      external_labels:
+        cluster: 'ai-finops'
+        env: 'production'
+
+    # Alertmanager configuration
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - alertmanager:9093
 
     rule_files:
       - /etc/prometheus/rules/*.yaml
@@ -124,6 +134,10 @@ data:
 
       - name: ai-finops-recording
         rules:
+          # =============================================
+          # GPU Utilization Recording Rules
+          # =============================================
+
           # Record hourly GPU cost
           - record: ai_finops:gpu_cost_hourly
             expr: |
@@ -138,6 +152,128 @@ data:
             expr: |
               sum by (team) (
                 (DCGM_FI_DEV_GPU_UTIL < 10) * 1
+              )
+
+          # Average GPU utilization over 1 hour (for trending)
+          - record: ai_finops:gpu_util_avg_1h
+            expr: avg_over_time(DCGM_FI_DEV_GPU_UTIL[1h])
+
+          # Average GPU utilization by team over 1 hour
+          - record: ai_finops:gpu_util_by_team_1h
+            expr: |
+              avg by (team) (
+                avg_over_time(DCGM_FI_DEV_GPU_UTIL[1h])
+              )
+
+          # Peak GPU utilization over 1 hour
+          - record: ai_finops:gpu_util_peak_1h
+            expr: max_over_time(DCGM_FI_DEV_GPU_UTIL[1h])
+
+          # =============================================
+          # Cost Trending Recording Rules
+          # =============================================
+
+          # Daily cost by team (sampled every hour for trending)
+          - record: ai_finops:team_cost_daily_trend
+            expr: ai_finops_team_cost_daily
+
+          # Hourly cost rate (for forecasting)
+          - record: ai_finops:cost_rate_hourly
+            expr: |
+              sum by (team) (
+                ai_finops_gpu_cost_per_hour
+              )
+
+          # 7-day average daily cost by team
+          - record: ai_finops:team_cost_7d_avg
+            expr: |
+              avg_over_time(ai_finops_team_cost_daily[7d])
+
+          # 30-day average daily cost by team
+          - record: ai_finops:team_cost_30d_avg
+            expr: |
+              avg_over_time(ai_finops_team_cost_daily[30d])
+
+          # Cost trend (current vs 7-day avg) - positive = increasing
+          - record: ai_finops:cost_trend_7d
+            expr: |
+              (ai_finops_team_cost_daily - avg_over_time(ai_finops_team_cost_daily[7d]))
+              / avg_over_time(ai_finops_team_cost_daily[7d]) * 100
+
+          # =============================================
+          # Efficiency Recording Rules
+          # =============================================
+
+          # GPU efficiency score by team (cost-weighted utilization)
+          - record: ai_finops:efficiency_score
+            expr: |
+              avg by (team) (ai_finops_gpu_efficiency)
+
+          # Idle GPU percentage by team
+          - record: ai_finops:idle_gpu_pct
+            expr: |
+              sum by (team) (DCGM_FI_DEV_GPU_UTIL < 20)
+              / count by (team) (DCGM_FI_DEV_GPU_UTIL) * 100
+
+          # =============================================
+          # Forecasting Recording Rules
+          # =============================================
+
+          # Estimated end-of-month cost (based on current daily rate)
+          - record: ai_finops:eom_cost_forecast
+            expr: |
+              ai_finops_team_cost_daily * (
+                (days_in_month(timestamp(vector(time()))) - day_of_month(timestamp(vector(time())))) + 1
+              )
+
+          # Linear regression slope for cost trend (7-day)
+          - record: ai_finops:cost_slope_7d
+            expr: |
+              deriv(ai_finops_team_cost_daily[7d])
+
+          # Predicted daily cost in 7 days (linear extrapolation)
+          - record: ai_finops:cost_forecast_7d
+            expr: |
+              ai_finops_team_cost_daily + (deriv(ai_finops_team_cost_daily[7d]) * 7 * 86400)
+
+          # =============================================
+          # Budget Tracking Recording Rules
+          # =============================================
+
+          # Monthly cost accumulator (resets each month)
+          - record: ai_finops:monthly_cost_accumulated
+            expr: |
+              sum by (team) (
+                ai_finops_team_cost_daily * day_of_month(timestamp(vector(time())))
+              )
+
+          # Budget remaining (assuming $5000 monthly budget per team)
+          - record: ai_finops:budget_remaining
+            expr: |
+              5000 - sum by (team) (
+                ai_finops_team_cost_daily * day_of_month(timestamp(vector(time())))
+              )
+
+          # Days until budget exhaustion at current rate
+          - record: ai_finops:days_until_budget_exhaustion
+            expr: |
+              (5000 - sum by (team) (ai_finops_team_cost_daily * day_of_month(timestamp(vector(time())))))
+              / ai_finops_team_cost_daily
+
+          # =============================================
+          # Spot Savings Recording Rules
+          # =============================================
+
+          # Total potential spot savings per team
+          - record: ai_finops:spot_savings_total
+            expr: |
+              sum by (team) (ai_finops_spot_savings_potential)
+
+          # Realized savings (if using spot - placeholder for actual tracking)
+          - record: ai_finops:spot_savings_realized
+            expr: |
+              sum by (team) (
+                ai_finops_spot_savings_potential * 0  # Placeholder - implement with actual spot tracking
               )
 
 ---
@@ -161,7 +297,7 @@ spec:
       serviceAccountName: prometheus
       containers:
         - name: prometheus
-          image: prom/prometheus:v3.0.1
+          image: prom/prometheus:v3.8.0
           args:
             - '--config.file=/etc/prometheus/prometheus.yml'
             - '--storage.tsdb.path=/prometheus'

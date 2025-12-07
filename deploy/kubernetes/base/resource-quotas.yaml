@@ -1,0 +1,124 @@
+# Resource Quotas and LimitRanges for AI FinOps Platform
+# Ensures fair resource allocation and prevents resource abuse
+
+# Namespace resource quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ai-finops-quota
+  namespace: ai-finops
+spec:
+  hard:
+    # Compute resources
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
+
+    # Storage
+    requests.storage: 100Gi
+    persistentvolumeclaims: "10"
+
+    # Object counts
+    pods: "50"
+    services: "20"
+    secrets: "50"
+    configmaps: "50"
+    replicationcontrollers: "20"
+    deployments.apps: "20"
+    statefulsets.apps: "10"
+
+---
+# LimitRange for default resource limits
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ai-finops-limits
+  namespace: ai-finops
+spec:
+  limits:
+    # Default limits for containers
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      min:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: "4"
+        memory: 8Gi
+
+    # Pod-level limits
+    - type: Pod
+      max:
+        cpu: "8"
+        memory: 16Gi
+
+    # PVC limits
+    - type: PersistentVolumeClaim
+      min:
+        storage: 1Gi
+      max:
+        storage: 50Gi
+
+---
+# GPU workload namespace quota (for ml-workloads namespace)
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gpu-workloads-quota
+  namespace: ml-workloads
+spec:
+  hard:
+    # GPU resources
+    requests.nvidia.com/gpu: "8"
+    limits.nvidia.com/gpu: "8"
+
+    # Compute resources
+    requests.cpu: "64"
+    requests.memory: 256Gi
+    limits.cpu: "128"
+    limits.memory: 512Gi
+
+    # Storage for training data
+    requests.storage: 1Ti
+    persistentvolumeclaims: "20"
+
+    # Object counts
+    pods: "100"
+    jobs.batch: "50"
+
+---
+# LimitRange for GPU workloads
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: gpu-workloads-limits
+  namespace: ml-workloads
+spec:
+  limits:
+    # GPU container defaults
+    - type: Container
+      default:
+        cpu: "4"
+        memory: 16Gi
+      defaultRequest:
+        cpu: "2"
+        memory: 8Gi
+      min:
+        cpu: 500m
+        memory: 1Gi
+      max:
+        cpu: "32"
+        memory: 128Gi
+
+    # Pod-level limits for multi-GPU training
+    - type: Pod
+      max:
+        cpu: "64"
+        memory: 256Gi
+        nvidia.com/gpu: "8"

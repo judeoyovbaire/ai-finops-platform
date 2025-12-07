@@ -1,0 +1,230 @@
+# Infracost Integration for Multi-Cloud Pricing
+# Provides real-time cloud pricing data for AWS, GCP, and Azure
+#
+# Infracost Cloud Pricing API provides:
+# - Real-time pricing for 3M+ cloud resources
+# - Automatic price updates
+# - GPU instance pricing for all major clouds
+#
+# Setup:
+# 1. Get free API key: https://www.infracost.io/docs/integrations/infracost_api/
+# 2. Store in AWS Secrets Manager or update the secret below
+# 3. GPU Enricher queries Infracost for live pricing
+
+# ConfigMap for Infracost configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: infracost-config
+  namespace: ai-finops
+data:
+  # Pricing API endpoint
+  api_endpoint: "https://pricing.api.infracost.io"
+
+  # GPU instance types to track pricing for
+  tracked_instances.yaml: |
+    aws:
+      - g4dn.xlarge
+      - g4dn.2xlarge
+      - g4dn.4xlarge
+      - g4dn.8xlarge
+      - g4dn.12xlarge
+      - g4dn.16xlarge
+      - g5.xlarge
+      - g5.2xlarge
+      - g5.4xlarge
+      - g5.8xlarge
+      - g5.12xlarge
+      - g5.16xlarge
+      - p3.2xlarge
+      - p3.8xlarge
+      - p3.16xlarge
+      - p4d.24xlarge
+      - p5.48xlarge
+
+    gcp:
+      - n1-standard-4    # + T4 GPU
+      - n1-standard-8    # + T4 GPU
+      - n1-standard-16   # + V100 GPU
+      - a2-highgpu-1g    # A100 40GB
+      - a2-highgpu-2g
+      - a2-highgpu-4g
+      - a2-highgpu-8g
+      - a2-ultragpu-1g   # A100 80GB
+      - a2-ultragpu-2g
+      - a2-ultragpu-4g
+      - a2-ultragpu-8g
+      - g2-standard-4    # L4 GPU
+      - g2-standard-8
+      - g2-standard-16
+
+    azure:
+      - Standard_NC4as_T4_v3
+      - Standard_NC8as_T4_v3
+      - Standard_NC16as_T4_v3
+      - Standard_NC64as_T4_v3
+      - Standard_NC24ads_A100_v4
+      - Standard_NC48ads_A100_v4
+      - Standard_NC96ads_A100_v4
+      - Standard_ND96asr_v4       # A100 80GB
+      - Standard_ND96amsr_A100_v4
+
+  # Pricing refresh interval (in seconds)
+  refresh_interval: "3600"  # 1 hour
+
+---
+# Secret for Infracost API key
+apiVersion: v1
+kind: Secret
+metadata:
+  name: infracost-api-key
+  namespace: ai-finops
+  annotations:
+    description: "Infracost API key for pricing lookups. Override with ExternalSecrets in production."
+type: Opaque
+stringData:
+  # Get your free API key at https://www.infracost.io/docs/integrations/infracost_api/
+  api-key: "YOUR_INFRACOST_API_KEY"
+
+---
+# CronJob to refresh pricing data periodically
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: infracost-pricing-sync
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: infracost-pricing-sync
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: infracost-pricing-sync
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: pricing-sync
+              image: python:3.12-slim
+              command:
+                - python
+                - -c
+                - |
+                  import json
+                  import os
+                  import requests
+                  import yaml
+
+                  API_KEY = os.environ.get('INFRACOST_API_KEY')
+                  API_ENDPOINT = os.environ.get('INFRACOST_API_ENDPOINT', 'https://pricing.api.infracost.io')
+
+                  # Load tracked instances
+                  with open('/etc/config/tracked_instances.yaml') as f:
+                      tracked = yaml.safe_load(f)
+
+                  pricing_data = {}
+
+                  # Fetch AWS pricing
+                  for instance_type in tracked.get('aws', []):
+                      try:
+                          resp = requests.get(
+                              f'{API_ENDPOINT}/graphql',
+                              headers={
+                                  'X-Api-Key': API_KEY,
+                                  'Content-Type': 'application/json'
+                              },
+                              json={
+                                  'query': '''
+                                    query($filter: ProductFilter!) {
+                                      products(filter: $filter) {
+                                        prices(filter: {purchaseOption: "on_demand"}) {
+                                          USD
+                                        }
+                                      }
+                                    }
+                                  ''',
+                                  'variables': {
+                                      'filter': {
+                                          'vendorName': 'aws',
+                                          'service': 'AmazonEC2',
+                                          'productFamily': 'Compute Instance',
+                                          'region': 'us-west-2',
+                                          'attributeFilters': [
+                                              {'key': 'instanceType', 'value': instance_type}
+                                          ]
+                                      }
+                                  }
+                              },
+                              timeout=30
+                          )
+                          if resp.status_code == 200:
+                              data = resp.json()
+                              products = data.get('data', {}).get('products', [])
+                              if products and products[0].get('prices'):
+                                  price = float(products[0]['prices'][0]['USD'])
+                                  pricing_data[f'aws:{instance_type}'] = {
+                                      'on_demand': price,
+                                      'spot_avg': price * 0.3  # Estimate spot as 30% of on-demand
+                                  }
+                                  print(f'AWS {instance_type}: ${price}/hr')
+                      except Exception as e:
+                          print(f'Error fetching AWS {instance_type}: {e}')
+
+                  # Update ConfigMap with new pricing
+                  if pricing_data:
+                      print(f'\nUpdated pricing for {len(pricing_data)} instance types')
+                      # In production, update the ConfigMap via Kubernetes API
+                      print(json.dumps(pricing_data, indent=2))
+
+              env:
+                - name: INFRACOST_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: infracost-api-key
+                      key: api-key
+                - name: INFRACOST_API_ENDPOINT
+                  valueFrom:
+                    configMapKeyRef:
+                      name: infracost-config
+                      key: api_endpoint
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/config
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
+
+          volumes:
+            - name: config
+              configMap:
+                name: infracost-config
+
+---
+# ExternalSecret for Infracost API key (production)
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: infracost-api-key-eso
+  namespace: ai-finops
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: aws-secrets-manager
+  target:
+    name: infracost-api-key
+    creationPolicy: Owner
+  data:
+    - secretKey: api-key
+      remoteRef:
+        key: ai-finops/infracost
+        property: api_key
