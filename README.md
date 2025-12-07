@@ -25,14 +25,14 @@ This platform provides comprehensive cost observability for AI infrastructure by
 │                    AI FinOps Platform                          │
 ├────────────────────────────────────────────────────────────────┤
 │                                                                │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐│
-│  │   NVIDIA    │  │  OpenCost   │  │     GPU Enricher       ││
-│  │    DCGM     │  │   (CNCF)    │  │                         ││
-│  │  Exporter   │  │             │  │  • Joins GPU + K8s     ││
-│  │             │  │ • K8s costs │  │  • Idle detection      ││
-│  │ • GPU util  │  │ • Cloud API │  │  • Spot recommendations││
-│  │ • Temp/Mem  │  │ • Namespace │  │  • REST API            ││
-│  └──────┬──────┘  └──────┬──────┘  └───────────┬─────────────┘│
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
+│  │   NVIDIA    │  │  OpenCost   │  │     GPU Enricher        │ │
+│  │    DCGM     │  │   (CNCF)    │  │                         │ │
+│  │  Exporter   │  │             │  │  • Joins GPU + K8s      │ │
+│  │             │  │ • K8s costs │  │  • Idle detection       │ │
+│  │ • GPU util  │  │ • Cloud API │  │  • Spot recommendations │ │
+│  │ • Temp/Mem  │  │ • Namespace │  │  • REST API             │ │
+│  └──────┬──────┘  └──────┬──────┘  └───────────┬─────────────┘ │
 │         │                │                     │               │
 │         └────────────────┼─────────────────────┘               │
 │                          ▼                                     │
