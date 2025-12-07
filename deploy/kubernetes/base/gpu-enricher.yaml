@@ -1,14 +1,14 @@
-# Cost Calculator Service
-# Calculates GPU costs based on utilization and cloud pricing
+# GPU Enricher Service
+# Enriches OpenCost data with GPU-specific metrics and recommendations
 
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: cost-calculator-config
+  name: gpu-enricher-config
   namespace: ai-finops
 data:
   config.yaml: |
-    # Cloud provider pricing (USD per hour)
+    # Cloud provider GPU pricing (USD per hour)
     pricing:
       aws:
         g4dn.xlarge:
@@ -26,9 +26,15 @@ data:
         g5.2xlarge:
           on_demand: 1.212
           spot_avg: 0.364
+        g5.4xlarge:
+          on_demand: 2.424
+          spot_avg: 0.727
         p3.2xlarge:
           on_demand: 3.06
           spot_avg: 0.918
+        p3.8xlarge:
+          on_demand: 12.24
+          spot_avg: 3.67
         p4d.24xlarge:
           on_demand: 32.77
           spot_avg: 9.83
@@ -43,6 +49,12 @@ data:
         a2-highgpu-1g:
           on_demand: 3.67
           spot_avg: 1.10
+        a2-highgpu-2g:
+          on_demand: 7.34
+          spot_avg: 2.20
+        a2-highgpu-4g:
+          on_demand: 14.68
+          spot_avg: 4.40
 
       azure:
         Standard_NC4as_T4_v3:
@@ -51,11 +63,18 @@ data:
         Standard_NC8as_T4_v3:
           on_demand: 0.752
           spot_avg: 0.226
+        Standard_NC16as_T4_v3:
+          on_demand: 1.204
+          spot_avg: 0.361
+        Standard_NC24ads_A100_v4:
+          on_demand: 3.67
+          spot_avg: 1.10
 
-    # Metric collection settings
-    metrics:
-      scrape_interval: 15s
-      prometheus_url: http://prometheus:9090
+    # Thresholds for recommendations
+    thresholds:
+      idle_gpu_utilization: 20
+      low_utilization: 50
+      high_temperature: 85
 
     # Cost attribution labels
     labels:
@@ -68,32 +87,34 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cost-calculator
+  name: gpu-enricher
   namespace: ai-finops
   labels:
-    app.kubernetes.io/name: cost-calculator
+    app.kubernetes.io/name: gpu-enricher
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: cost-calculator
+      app.kubernetes.io/name: gpu-enricher
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: cost-calculator
+        app.kubernetes.io/name: gpu-enricher
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8080"
     spec:
       containers:
-        - name: cost-calculator
-          image: ghcr.io/judeoyovbaire/ai-finops-calculator:latest
+        - name: gpu-enricher
+          image: ghcr.io/judeoyovbaire/ai-finops-gpu-enricher:latest
           ports:
             - containerPort: 8080
               name: http
           env:
             - name: PROMETHEUS_URL
               value: "http://prometheus:9090"
+            - name: OPENCOST_URL
+              value: "http://opencost:9003"
             - name: CONFIG_PATH
               value: "/etc/config/config.yaml"
             - name: LOG_LEVEL
@@ -106,8 +127,8 @@ spec:
               cpu: 100m
               memory: 128Mi
             limits:
-              cpu: 200m
-              memory: 256Mi
+              cpu: 500m
+              memory: 512Mi
 
           livenessProbe:
             httpGet:
@@ -126,16 +147,16 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: cost-calculator-config
+            name: gpu-enricher-config
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: cost-calculator
+  name: gpu-enricher
   namespace: ai-finops
   labels:
-    app.kubernetes.io/name: cost-calculator
+    app.kubernetes.io/name: gpu-enricher
 spec:
   type: ClusterIP
   ports:
@@ -143,4 +164,4 @@ spec:
       targetPort: 8080
       name: http
   selector:
-    app.kubernetes.io/name: cost-calculator
+    app.kubernetes.io/name: gpu-enricher

@@ -5,6 +5,7 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 echo -e "${BLUE}========================================"
@@ -49,6 +50,12 @@ echo -e "\n${BLUE}Waiting for deployments to be ready...${NC}"
 echo -e "${BLUE}[i]${NC} Waiting for Prometheus..."
 kubectl rollout status deployment/prometheus -n ai-finops --timeout=120s
 
+echo -e "${BLUE}[i]${NC} Waiting for OpenCost..."
+kubectl rollout status deployment/opencost -n ai-finops --timeout=120s
+
+echo -e "${BLUE}[i]${NC} Waiting for GPU Enricher..."
+kubectl rollout status deployment/gpu-enricher -n ai-finops --timeout=120s
+
 echo -e "${BLUE}[i]${NC} Waiting for Grafana..."
 kubectl rollout status deployment/grafana -n ai-finops --timeout=120s
 
@@ -62,15 +69,31 @@ echo -e "\n${BLUE}========================================"
 echo -e "${GREEN}  Deployment Complete!                  "
 echo -e "${BLUE}========================================${NC}"
 
+echo -e "\n${YELLOW}Components Deployed:${NC}"
+echo -e "  • Prometheus      - Metrics collection & alerting"
+echo -e "  • OpenCost        - Kubernetes cost allocation"
+echo -e "  • GPU Enricher    - GPU cost enrichment & recommendations"
+echo -e "  • Grafana         - Visualization dashboards"
+echo -e "  • Mock GPU Metrics- Simulated GPU workloads"
+
 echo -e "\n${BLUE}Access URLs:${NC}"
-echo -e "  Grafana:    ${GREEN}http://localhost:3000${NC} (admin/admin)"
-echo -e "  Prometheus: ${GREEN}http://localhost:9090${NC}"
+echo -e "  Grafana:      ${GREEN}http://localhost:3000${NC} (admin/admin)"
+echo -e "  Prometheus:   ${GREEN}http://localhost:9090${NC}"
+echo -e "  OpenCost UI:  ${GREEN}http://localhost:9091${NC}"
+echo -e "  GPU Enricher: ${GREEN}http://localhost:8080${NC}"
 
 echo -e "\n${BLUE}Port Forward Commands:${NC}"
 echo -e "  make port-forward-grafana"
 echo -e "  make port-forward-prometheus"
+echo -e "  make port-forward-opencost"
+echo -e "  make port-forward-enricher"
+
+echo -e "\n${BLUE}API Endpoints (GPU Enricher):${NC}"
+echo -e "  GET /api/v1/costs/summary      - Cost summary by team"
+echo -e "  GET /api/v1/recommendations    - Optimization recommendations"
+echo -e "  GET /api/v1/gpu/utilization    - GPU utilization metrics"
 
 echo -e "\n${BLUE}Useful Commands:${NC}"
 echo -e "  kubectl get pods -n ai-finops     # View pods"
-echo -e "  kubectl logs -n ai-finops -l app.kubernetes.io/name=mock-gpu-metrics -f  # View mock metrics"
-echo -e "  make destroy                      # Remove deployment"
+echo -e "  make status                        # Check deployment status"
+echo -e "  make destroy                       # Remove deployment"

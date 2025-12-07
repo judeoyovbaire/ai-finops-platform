@@ -1,4 +1,4 @@
-.PHONY: help deploy-local deploy-aws destroy status port-forward-grafana port-forward-prometheus test lint clean
+.PHONY: help deploy-local deploy-aws destroy status port-forward-grafana port-forward-prometheus port-forward-opencost test lint clean
 
 # Default target
 help:
@@ -11,11 +11,14 @@ help:
 	@echo "  make status                Check deployment status"
 	@echo ""
 	@echo "Development:"
-	@echo "  make port-forward-grafana  Forward Grafana to localhost:3000"
-	@echo "  make port-forward-prometheus Forward Prometheus to localhost:9090"
-	@echo "  make test                  Run tests"
-	@echo "  make lint                  Lint Python code"
-	@echo "  make clean                 Clean build artifacts"
+	@echo "  make port-forward-grafana     Forward Grafana to localhost:3000"
+	@echo "  make port-forward-prometheus  Forward Prometheus to localhost:9090"
+	@echo "  make port-forward-opencost    Forward OpenCost UI to localhost:9091"
+	@echo "  make port-forward-enricher    Forward GPU Enricher API to localhost:8080"
+	@echo "  make test                     Run tests"
+	@echo "  make lint                     Lint Python code"
+	@echo "  make lint-fix                 Fix lint issues"
+	@echo "  make clean                    Clean build artifacts"
 	@echo ""
 	@echo "Build:"
 	@echo "  make build                 Build container images"
@@ -56,28 +59,46 @@ port-forward-prometheus:
 	@echo "Forwarding Prometheus to localhost:9090..."
 	kubectl port-forward -n ai-finops svc/prometheus 9090:9090
 
+port-forward-opencost:
+	@echo "Forwarding OpenCost UI to localhost:9091..."
+	kubectl port-forward -n ai-finops svc/opencost 9091:9090
+
+port-forward-enricher:
+	@echo "Forwarding GPU Enricher API to localhost:8080..."
+	@echo "API endpoints:"
+	@echo "  GET /health           - Health check"
+	@echo "  GET /metrics          - Prometheus metrics"
+	@echo "  GET /api/v1/costs/summary - Cost summary by team"
+	@echo "  GET /api/v1/recommendations - Optimization recommendations"
+	@echo "  GET /api/v1/gpu/utilization - GPU utilization metrics"
+	kubectl port-forward -n ai-finops svc/gpu-enricher 8080:8080
+
 # Development targets
 test:
 	@echo "Running tests..."
-	cd src/calculator && python -m pytest tests/ -v
+	cd src/gpu-enricher && python -m pytest test_main.py -v --tb=short
+
+test-cov:
+	@echo "Running tests with coverage..."
+	cd src/gpu-enricher && python -m pytest test_main.py -v --cov=main --cov-report=term-missing
 
 lint:
 	@echo "Linting Python code..."
-	cd src/calculator && ruff check . && ruff format --check .
+	cd src/gpu-enricher && ruff check . && ruff format --check .
 
 lint-fix:
 	@echo "Fixing lint issues..."
-	cd src/calculator && ruff check --fix . && ruff format .
+	cd src/gpu-enricher && ruff check --fix . && ruff format .
 
 # Build targets
 build:
 	@echo "Building container images..."
-	docker build -t ai-finops-calculator:latest -f src/calculator/Dockerfile src/calculator
+	docker build -t ai-finops-gpu-enricher:latest -f src/gpu-enricher/Dockerfile src/gpu-enricher
 
 push:
 	@echo "Pushing images to registry..."
-	docker tag ai-finops-calculator:latest ghcr.io/judeoyovbaire/ai-finops-calculator:latest
-	docker push ghcr.io/judeoyovbaire/ai-finops-calculator:latest
+	docker tag ai-finops-gpu-enricher:latest ghcr.io/judeoyovbaire/ai-finops-gpu-enricher:latest
+	docker push ghcr.io/judeoyovbaire/ai-finops-gpu-enricher:latest
 
 # Clean targets
 clean:
@@ -85,3 +106,4 @@ clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
 	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true

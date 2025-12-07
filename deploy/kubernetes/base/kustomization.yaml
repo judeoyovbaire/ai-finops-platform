@@ -7,7 +7,8 @@ resources:
   - namespace.yaml
   - dcgm-exporter.yaml
   - prometheus.yaml
-  - cost-calculator.yaml
+  - opencost.yaml
+  - gpu-enricher.yaml
   - grafana.yaml
   - grafana-dashboards.yaml
 

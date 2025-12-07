@@ -1,0 +1,208 @@
+# OpenCost - Kubernetes Cost Monitoring
+# Provides base Kubernetes cost allocation that we enrich with GPU metrics
+# https://www.opencost.io/
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opencost
+  namespace: ai-finops
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ai-finops-opencost
+rules:
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - deployments
+      - nodes
+      - pods
+      - services
+      - resourcequotas
+      - replicationcontrollers
+      - limitranges
+      - persistentvolumeclaims
+      - persistentvolumes
+      - namespaces
+      - endpoints
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["extensions", "apps"]
+    resources:
+      - daemonsets
+      - deployments
+      - replicasets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources:
+      - cronjobs
+      - jobs
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["policy"]
+    resources:
+      - poddisruptionbudgets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources:
+      - storageclasses
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ai-finops-opencost
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ai-finops-opencost
+subjects:
+  - kind: ServiceAccount
+    name: opencost
+    namespace: ai-finops
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opencost-config
+  namespace: ai-finops
+data:
+  # Custom pricing for GPU instances (extends OpenCost defaults)
+  # OpenCost will use cloud provider APIs when available
+  default.json: |
+    {
+      "provider": "custom",
+      "description": "AI FinOps custom pricing with GPU instances",
+      "CPU": 0.031611,
+      "RAM": 0.004237,
+      "GPU": 0.95,
+      "storage": 0.00005479452,
+      "spotCPU": 0.006655,
+      "spotRAM": 0.000892,
+      "spotGPU": 0.285,
+      "zoneNetworkEgress": 0.01,
+      "regionNetworkEgress": 0.01,
+      "internetNetworkEgress": 0.12
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencost
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: opencost
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opencost
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opencost
+    spec:
+      serviceAccountName: opencost
+      containers:
+        - name: opencost
+          image: ghcr.io/opencost/opencost:1.113.0
+          ports:
+            - containerPort: 9003
+              name: http
+          env:
+            - name: PROMETHEUS_SERVER_ENDPOINT
+              value: "http://prometheus:9090"
+            - name: CLOUD_PROVIDER_API_KEY
+              value: ""
+            - name: CLUSTER_ID
+              value: "ai-finops-cluster"
+            - name: EMIT_KSM_V1_METRICS
+              value: "false"
+            - name: EMIT_KSM_V1_METRICS_ONLY
+              value: "true"
+            - name: PROM_CLUSTER_ID_LABEL
+              value: "cluster"
+            # GPU cost settings
+            - name: KUBECOST_NAMESPACE
+              value: "ai-finops"
+            - name: LOG_LEVEL
+              value: "info"
+          volumeMounts:
+            - name: config
+              mountPath: /models
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9003
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9003
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+        # OpenCost UI for visualization
+        - name: opencost-ui
+          image: ghcr.io/opencost/opencost-ui:1.113.0
+          ports:
+            - containerPort: 9090
+              name: ui
+          env:
+            - name: API_PORT
+              value: "9003"
+            - name: UI_PORT
+              value: "9090"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+
+      volumes:
+        - name: config
+          configMap:
+            name: opencost-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opencost
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: opencost
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9003"
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9003
+      targetPort: 9003
+      name: http
+    - port: 9090
+      targetPort: 9090
+      name: ui
+  selector:
+    app.kubernetes.io/name: opencost

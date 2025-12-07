@@ -1,0 +1,161 @@
+# Sample GPU Training Job
+# Demonstrates AI FinOps labeling strategy for cost attribution
+#
+# Labels used:
+#   ai-finops.io/team       - Team responsible for the workload
+#   ai-finops.io/project    - Project or product name
+#   ai-finops.io/model      - ML model being trained/served
+#   ai-finops.io/environment - Environment (dev, staging, production)
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: recommendation-model-training
+  namespace: ml-workloads
+  labels:
+    ai-finops.io/team: "ml-platform"
+    ai-finops.io/project: "recommendation-engine"
+    ai-finops.io/model: "product-embeddings-v2"
+    ai-finops.io/environment: "production"
+  annotations:
+    ai-finops.io/cost-center: "ML-001"
+    ai-finops.io/budget-owner: "ml-platform@company.com"
+spec:
+  parallelism: 4
+  completions: 4
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        ai-finops.io/team: "ml-platform"
+        ai-finops.io/project: "recommendation-engine"
+        ai-finops.io/model: "product-embeddings-v2"
+        ai-finops.io/environment: "production"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: trainer
+          image: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+          command:
+            - python
+            - -m
+            - torch.distributed.launch
+            - --nproc_per_node=1
+            - train.py
+          args:
+            - --model=product-embeddings
+            - --epochs=100
+            - --batch-size=256
+            - --checkpoint-dir=/checkpoints
+          resources:
+            requests:
+              cpu: "4"
+              memory: "16Gi"
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "8"
+              memory: "32Gi"
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: training-data
+              mountPath: /data
+            - name: checkpoints
+              mountPath: /checkpoints
+          env:
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0"
+            - name: WANDB_PROJECT
+              value: "recommendation-engine"
+
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+
+      volumes:
+        - name: training-data
+          persistentVolumeClaim:
+            claimName: training-data-pvc
+        - name: checkpoints
+          persistentVolumeClaim:
+            claimName: checkpoints-pvc
+
+---
+# Spot-tolerant training job with checkpointing
+# Uses spot instances with automatic fallback
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nlp-classifier-training-spot
+  namespace: ml-workloads
+  labels:
+    ai-finops.io/team: "data-science"
+    ai-finops.io/project: "customer-support"
+    ai-finops.io/model: "nlp-classifier"
+    ai-finops.io/environment: "staging"
+    ai-finops.io/spot-tolerant: "true"
+  annotations:
+    ai-finops.io/cost-center: "DS-002"
+spec:
+  parallelism: 2
+  completions: 2
+  template:
+    metadata:
+      labels:
+        ai-finops.io/team: "data-science"
+        ai-finops.io/project: "customer-support"
+        ai-finops.io/model: "nlp-classifier"
+        ai-finops.io/environment: "staging"
+        ai-finops.io/spot-tolerant: "true"
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: trainer
+          image: huggingface/transformers-pytorch-gpu:latest
+          command: ["python", "train_classifier.py"]
+          args:
+            - --model-name=bert-base-uncased
+            - --checkpoint-every=1000
+            - --resume-from-checkpoint
+          resources:
+            requests:
+              nvidia.com/gpu: "1"
+              memory: "8Gi"
+            limits:
+              nvidia.com/gpu: "1"
+              memory: "16Gi"
+
+      # Prefer spot instances
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: "node.kubernetes.io/instance-type"
+                    operator: In
+                    values:
+                      - "g4dn.xlarge"
+                      - "g4dn.2xlarge"
+            - weight: 50
+              preference:
+                matchExpressions:
+                  - key: "karpenter.sh/capacity-type"
+                    operator: In
+                    values:
+                      - "spot"
+
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "karpenter.sh/capacity-type"
+          operator: "Equal"
+          value: "spot"
+          effect: "NoSchedule"

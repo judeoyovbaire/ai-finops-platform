@@ -18,27 +18,34 @@ Organizations running AI/ML workloads face significant cost challenges:
 
 ## The Solution
 
-This platform provides comprehensive cost observability for AI infrastructure:
+This platform provides comprehensive cost observability for AI infrastructure by combining [OpenCost](https://opencost.io/) for Kubernetes cost allocation with GPU-specific metrics from NVIDIA DCGM:
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    AI FinOps Platform                               │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────────┐ │
-│  │   NVIDIA    │    │    Cost     │    │       Grafana           │ │
-│  │    DCGM     │───▶│  Calculator │───▶│      Dashboards         │ │
-│  │  Exporter   │    │   Service   │    │                         │ │
-│  └─────────────┘    └─────────────┘    │  - GPU Utilization      │ │
-│         │                  │           │  - Cost per Model       │ │
-│         │                  │           │  - Team Chargeback      │ │
-│         ▼                  ▼           │  - Idle Detection       │ │
-│  ┌─────────────────────────────────┐   │  - Recommendations      │ │
-│  │          Prometheus             │   └─────────────────────────┘ │
-│  │    (Metrics Storage)            │                               │
-│  └─────────────────────────────────┘                               │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                    AI FinOps Platform                          │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐│
+│  │   NVIDIA    │  │  OpenCost   │  │     GPU Enricher       ││
+│  │    DCGM     │  │   (CNCF)    │  │                         ││
+│  │  Exporter   │  │             │  │  • Joins GPU + K8s     ││
+│  │             │  │ • K8s costs │  │  • Idle detection      ││
+│  │ • GPU util  │  │ • Cloud API │  │  • Spot recommendations││
+│  │ • Temp/Mem  │  │ • Namespace │  │  • REST API            ││
+│  └──────┬──────┘  └──────┬──────┘  └───────────┬─────────────┘│
+│         │                │                     │               │
+│         └────────────────┼─────────────────────┘               │
+│                          ▼                                     │
+│                   ┌─────────────┐                              │
+│                   │ Prometheus  │                              │
+│                   │   v3.0.1    │                              │
+│                   └──────┬──────┘                              │
+│                          ▼                                     │
+│                   ┌─────────────┐                              │
+│                   │   Grafana   │                              │
+│                   │   v11.4.0   │                              │
+│                   └─────────────┘                              │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ## Key Outcomes
@@ -54,25 +61,26 @@ This platform provides comprehensive cost observability for AI infrastructure:
 ## Features
 
 - **GPU Utilization Monitoring**: Real-time metrics via NVIDIA DCGM Exporter
+- **OpenCost Integration**: CNCF-backed Kubernetes cost allocation
 - **Cost-per-Inference Tracking**: Calculate actual cost for each model request
 - **Team/Project Attribution**: Label-based cost allocation and chargeback
 - **Idle Resource Detection**: Automatic alerts for underutilized GPUs
 - **Spot vs On-Demand Analysis**: Recommendations for instance optimization
 - **Budget Alerting**: Proactive notifications before budget breaches
-- **Historical Trending**: Track cost patterns over time
+- **REST API**: Query costs and recommendations programmatically
 - **Grafana Dashboards**: Pre-built visualizations for all metrics
 
 ## Architecture
 
 ### Components
 
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| GPU Metrics | NVIDIA DCGM Exporter | Collect GPU utilization, memory, temperature |
-| Cost Calculator | Python Service | Join metrics with pricing, calculate costs |
-| Metrics Storage | Prometheus | Time-series database for all metrics |
-| Visualization | Grafana | Dashboards and alerting |
-| Alert Manager | Prometheus Alertmanager | Notifications (Slack, email, PagerDuty) |
+| Component | Technology | Version | Purpose |
+|-----------|------------|---------|---------|
+| GPU Metrics | NVIDIA DCGM Exporter | 3.3.9 | Collect GPU utilization, memory, temperature |
+| K8s Costs | OpenCost | 1.113.0 | Kubernetes resource cost allocation |
+| GPU Enricher | Python/Flask | 3.12 | Enrich OpenCost with GPU metrics, provide API |
+| Metrics Storage | Prometheus | 3.0.1 | Time-series database for all metrics |
+| Visualization | Grafana | 11.4.0 | Dashboards and alerting |
 
 ### Metrics Collected
 
@@ -82,22 +90,33 @@ This platform provides comprehensive cost observability for AI infrastructure:
 - `DCGM_FI_DEV_GPU_TEMP` - GPU temperature
 - `DCGM_FI_DEV_POWER_USAGE` - Power consumption
 
-**Cost Metrics (calculated):**
-- `ai_finops_gpu_cost_per_hour` - Hourly cost by GPU type
-- `ai_finops_inference_cost_total` - Cost per inference request
+**Cost Metrics (GPU Enricher):**
+- `ai_finops_gpu_cost_per_hour` - Hourly cost by GPU and team
+- `ai_finops_team_cost_daily` - Daily cost by team (GPU + K8s)
+- `ai_finops_gpu_cost_daily` - Daily GPU-only cost
 - `ai_finops_idle_gpu_hours` - Wasted GPU hours
-- `ai_finops_team_cost_daily` - Daily cost by team label
+- `ai_finops_spot_savings_potential` - Potential spot savings
+- `ai_finops_gpu_efficiency` - GPU efficiency score
+
+**Operational Metrics:**
+- `ai_finops_prometheus_query_errors_total` - Query error tracking
+- `ai_finops_opencost_query_errors_total` - OpenCost API errors
+- `ai_finops_query_duration_seconds` - Query latency histogram
 
 ### Label Strategy
 
 Cost attribution uses Kubernetes labels:
 
 ```yaml
-labels:
-  ai-finops.io/team: "ml-platform"
-  ai-finops.io/project: "recommendation-engine"
-  ai-finops.io/model: "product-embeddings"
-  ai-finops.io/environment: "production"
+metadata:
+  labels:
+    ai-finops.io/team: "ml-platform"
+    ai-finops.io/project: "recommendation-engine"
+    ai-finops.io/model: "product-embeddings"
+    ai-finops.io/environment: "production"
+  annotations:
+    ai-finops.io/cost-center: "ML-001"
+    ai-finops.io/budget-owner: "ml-platform@company.com"
 ```
 
 ## Project Structure
@@ -106,39 +125,41 @@ labels:
 ai-finops-platform/
 ├── .github/
 │   └── workflows/
-│       └── ci.yaml              # CI pipeline
+│       └── ci.yaml                 # CI pipeline (lint, test, build, scan)
 ├── deploy/
 │   └── kubernetes/
-│       ├── base/                # Base Kustomize manifests
+│       ├── base/                   # Base Kustomize manifests
 │       │   ├── namespace.yaml
-│       │   ├── dcgm-exporter.yaml
-│       │   ├── prometheus.yaml
-│       │   ├── grafana.yaml
-│       │   ├── cost-calculator.yaml
+│       │   ├── dcgm-exporter.yaml  # NVIDIA GPU metrics
+│       │   ├── opencost.yaml       # OpenCost deployment
+│       │   ├── gpu-enricher.yaml   # GPU cost enrichment service
+│       │   ├── prometheus.yaml     # Prometheus with alert rules
+│       │   ├── grafana.yaml        # Grafana with datasources
+│       │   ├── grafana-dashboards.yaml
 │       │   └── kustomization.yaml
 │       └── overlays/
-│           ├── local/           # Local/Kind deployment
-│           └── aws/             # AWS EKS deployment
+│           ├── local/              # Local/Kind with mock metrics
+│           │   ├── mock-gpu-metrics.yaml
+│           │   ├── dcgm-disable-patch.yaml
+│           │   └── kustomization.yaml
+│           └── aws/                # AWS EKS with persistent storage
+│               ├── prometheus-storage-patch.yaml
+│               ├── grafana-storage-patch.yaml
+│               └── kustomization.yaml
 ├── src/
-│   ├── collector/               # Custom metrics collector (optional)
-│   ├── calculator/              # Cost calculation service
-│   │   ├── main.py
-│   │   ├── pricing.py
-│   │   ├── metrics.py
-│   │   └── requirements.txt
-│   └── api/                     # REST API for cost queries
+│   └── gpu-enricher/               # GPU cost enrichment service
+│       ├── main.py                 # Flask application
+│       ├── test_main.py            # Unit tests (50+ tests)
+│       ├── requirements.txt
+│       └── Dockerfile
 ├── dashboards/
-│   ├── gpu-utilization.json     # GPU metrics dashboard
-│   ├── cost-attribution.json    # Cost by team/model dashboard
-│   └── recommendations.json     # Optimization recommendations
-├── docs/
-│   └── architecture.md          # Detailed architecture docs
-├── scripts/
-│   ├── deploy-local.sh          # Local deployment script
-│   └── generate-test-data.sh    # Generate sample metrics
+│   └── gpu-overview.json           # Comprehensive GPU dashboard
 ├── examples/
-│   └── sample-workload.yaml     # Example GPU workload with labels
-├── Makefile
+│   ├── sample-training-job.yaml    # Training job with labels
+│   └── sample-inference-deployment.yaml  # Inference with HPA
+├── scripts/
+│   └── deploy-local.sh             # Local deployment automation
+├── Makefile                        # Build and deployment commands
 ├── README.md
 └── LICENSE
 ```
@@ -147,10 +168,10 @@ ai-finops-platform/
 
 ### Prerequisites
 
-- Kubernetes cluster with GPU nodes
-- NVIDIA GPU Operator installed (or NVIDIA drivers)
+- Kubernetes cluster (1.21+)
 - kubectl configured
-- Helm 3.x (optional, for Prometheus stack)
+- kustomize installed
+- For GPU metrics: NVIDIA GPU Operator or drivers
 
 ### Quick Start - Local (Kind)
 
@@ -159,12 +180,17 @@ ai-finops-platform/
 git clone https://github.com/judeoyovbaire/ai-finops-platform.git
 cd ai-finops-platform
 
-# Deploy to local Kind cluster (simulated GPU metrics)
+# Create Kind cluster (if needed)
+kind create cluster --name ai-finops
+
+# Deploy to local cluster (uses mock GPU metrics)
 make deploy-local
 
-# Access dashboards
-make port-forward-grafana  # Grafana at localhost:3000
+# Access services (run in separate terminals)
+make port-forward-grafana     # Grafana at localhost:3000 (admin/admin)
 make port-forward-prometheus  # Prometheus at localhost:9090
+make port-forward-opencost    # OpenCost UI at localhost:9091
+make port-forward-enricher    # GPU Enricher API at localhost:8080
 ```
 
 ### Quick Start - AWS EKS
@@ -177,134 +203,199 @@ make deploy-aws
 make status
 ```
 
-### Using the Makefile
+### API Endpoints
+
+The GPU Enricher provides a REST API:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/ready` | GET | Readiness probe |
+| `/metrics` | GET | Prometheus metrics |
+| `/api/v1/costs/summary` | GET | Cost summary by team |
+| `/api/v1/costs/team/<team>` | GET | Detailed costs for a team |
+| `/api/v1/recommendations` | GET | Optimization recommendations |
+| `/api/v1/gpu/utilization` | GET | Current GPU utilization |
+
+Example:
+```bash
+# Get cost summary
+curl http://localhost:8080/api/v1/costs/summary
+
+# Get recommendations (filter by severity)
+curl http://localhost:8080/api/v1/recommendations?severity=high
+```
+
+### Makefile Commands
 
 ```bash
-make help                    # Show all commands
+make help                       # Show all commands
 
 # Deployment
-make deploy-local            # Deploy to local Kind cluster
-make deploy-aws              # Deploy to AWS EKS
-make destroy                 # Remove all resources
+make deploy-local               # Deploy to local Kind cluster
+make deploy-aws                 # Deploy to AWS EKS
+make destroy                    # Remove all resources
+make status                     # Check deployment status
+
+# Port Forwarding
+make port-forward-grafana       # Grafana at localhost:3000
+make port-forward-prometheus    # Prometheus at localhost:9090
+make port-forward-opencost      # OpenCost UI at localhost:9091
+make port-forward-enricher      # GPU Enricher API at localhost:8080
 
 # Development
-make port-forward-grafana    # Forward Grafana to localhost:3000
-make port-forward-prometheus # Forward Prometheus to localhost:9090
-make test                    # Run tests
-make lint                    # Lint Python code
+make test                       # Run unit tests
+make test-cov                   # Run tests with coverage
+make lint                       # Lint Python code
+make lint-fix                   # Auto-fix lint issues
+make build                      # Build container image
+make push                       # Push to registry
+make clean                      # Clean build artifacts
 ```
 
 ## Dashboards
 
-### GPU Utilization Overview
+### GPU Overview Dashboard
 
-Shows real-time GPU utilization across all nodes:
-- Utilization heatmap by node
-- Memory usage trends
-- Idle GPU detection
+Comprehensive dashboard with 15 panels across 4 sections:
+
+**Cost Overview:**
+- Total daily cost (GPU + K8s)
+- GPU-only daily cost
+- Potential spot savings
+- Idle GPU count
+
+**GPU Utilization:**
+- Utilization by node (timeseries)
+- Average utilization by team (gauge)
+- Memory utilization
 - Temperature monitoring
 
-### Cost Attribution
+**Efficiency & Recommendations:**
+- GPU efficiency by team
+- Idle GPU hours by team
+- Spot savings potential by node
 
-Break down costs by dimensions:
-- Cost per team (daily/weekly/monthly)
-- Cost per model
-- Cost per environment
-- Trend analysis
-
-### Optimization Recommendations
-
-Actionable insights:
-- Underutilized GPUs (candidates for scale-down)
-- High-cost models (optimization targets)
-- Spot instance opportunities
-- Right-sizing suggestions
+**Service Health:**
+- Query error rates
+- Query latency (p50, p95)
 
 ## Configuration
 
 ### Cloud Pricing
 
-Configure GPU instance pricing in `src/calculator/pricing.py`:
+Configure GPU pricing in `deploy/kubernetes/base/gpu-enricher.yaml`:
 
-```python
-GPU_PRICING = {
-    "aws": {
-        "g4dn.xlarge": {"on_demand": 0.526, "spot_avg": 0.158},
-        "g4dn.2xlarge": {"on_demand": 0.752, "spot_avg": 0.226},
-        "g5.xlarge": {"on_demand": 1.006, "spot_avg": 0.302},
-        "p3.2xlarge": {"on_demand": 3.06, "spot_avg": 0.918},
-    },
-    "gcp": {
-        "n1-standard-4-t4": {"on_demand": 0.35, "spot_avg": 0.11},
-        "a2-highgpu-1g": {"on_demand": 3.67, "spot_avg": 1.10},
-    }
-}
+```yaml
+pricing:
+  aws:
+    g4dn.xlarge:
+      on_demand: 0.526
+      spot_avg: 0.158
+    g5.xlarge:
+      on_demand: 1.006
+      spot_avg: 0.302
+    p3.2xlarge:
+      on_demand: 3.06
+      spot_avg: 0.918
+  gcp:
+    n1-standard-4-t4:
+      on_demand: 0.35
+      spot_avg: 0.11
+  azure:
+    Standard_NC4as_T4_v3:
+      on_demand: 0.526
+      spot_avg: 0.158
 ```
 
 ### Alert Thresholds
 
-Configure alerts in `deploy/kubernetes/base/prometheus-rules.yaml`:
+Alerts are configured in `deploy/kubernetes/base/prometheus.yaml`:
 
 ```yaml
 groups:
   - name: ai-finops-alerts
     rules:
       - alert: GPUIdleHigh
-        expr: avg(DCGM_FI_DEV_GPU_UTIL) by (node) < 20
+        expr: avg by (node, gpu) (DCGM_FI_DEV_GPU_UTIL) < 20
         for: 30m
         labels:
           severity: warning
-        annotations:
-          summary: "GPU idle for 30+ minutes"
 
       - alert: DailyBudgetExceeded
         expr: sum(ai_finops_team_cost_daily) > 1000
         labels:
           severity: critical
-        annotations:
-          summary: "Daily GPU budget exceeded $1000"
+
+      - alert: GPUTemperatureHigh
+        expr: DCGM_FI_DEV_GPU_TEMP > 85
+        for: 5m
+        labels:
+          severity: warning
 ```
 
 ## Roadmap
 
-### Phase 1 - MVP (Current)
+### Phase 1 - MVP (Complete)
 - [x] Project structure and documentation
-- [ ] DCGM Exporter deployment
-- [ ] Prometheus configuration
-- [ ] Basic Grafana dashboards
-- [ ] Cost calculator service
-- [ ] Idle GPU alerting
+- [x] NVIDIA DCGM Exporter deployment
+- [x] OpenCost integration (CNCF)
+- [x] GPU Enricher service with REST API
+- [x] Prometheus configuration with alerts
+- [x] Comprehensive Grafana dashboard
+- [x] Idle GPU detection and alerting
+- [x] Unit tests (50+ test cases)
+- [x] Local development with mock metrics
 
 ### Phase 2 - Enhanced
-- [ ] Spot vs on-demand recommendations
-- [ ] Historical cost trending
-- [ ] Budget forecasting
-- [ ] Slack/email notifications
-- [ ] REST API for cost queries
+- [ ] Spot vs on-demand automated recommendations
+- [ ] Historical cost trending and forecasting
+- [ ] Slack/email/PagerDuty notifications
+- [ ] Multi-cloud pricing API integration
+- [ ] Budget forecasting with ML
 
 ### Phase 3 - Advanced
 - [ ] ML-based anomaly detection
 - [ ] Automated right-sizing recommendations
 - [ ] Cloud billing API integration (actual costs)
 - [ ] Chargeback report generation (PDF/CSV)
-- [ ] Multi-cluster aggregation
+- [ ] Multi-cluster aggregation (Thanos/Cortex)
 
 ## Integration with MLOps Platform
 
-This platform integrates seamlessly with the [MLOps Platform](https://github.com/judeoyovbaire/mlops-platform):
+This platform integrates with ML serving frameworks:
 
 ```yaml
-# Add labels to KServe InferenceServices
+# KServe InferenceService with cost labels
 apiVersion: serving.kserve.io/v1beta1
 kind: InferenceService
 metadata:
-  name: my-model
+  name: recommendation-model
   labels:
     ai-finops.io/team: "ml-platform"
-    ai-finops.io/model: "my-model"
+    ai-finops.io/model: "recommendation-v2"
+    ai-finops.io/environment: "production"
 spec:
   predictor:
-    # ... predictor config
+    model:
+      modelFormat:
+        name: pytorch
+      resources:
+        limits:
+          nvidia.com/gpu: "1"
+```
+
+## Testing
+
+```bash
+# Run all tests
+make test
+
+# Run with coverage
+make test-cov
+
+# Lint code
+make lint
 ```
 
 ## Contributing

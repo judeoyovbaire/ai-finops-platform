@@ -1,5 +1,12 @@
 # Mock GPU Metrics Generator for Local Development
-# Generates fake GPU metrics for testing dashboards without real GPUs
+# Generates realistic GPU metrics patterns for testing dashboards without real GPUs
+#
+# Patterns simulated:
+# - Business hours higher utilization (9am-6pm)
+# - Training jobs with sustained high utilization
+# - Inference workloads with variable load
+# - Idle GPUs during off-hours
+# - Temperature correlation with utilization
 
 apiVersion: apps/v1
 kind: Deployment
@@ -23,15 +30,169 @@ spec:
     spec:
       containers:
         - name: mock-exporter
-          image: python:3.11-slim
+          image: python:3.12-slim
           command:
             - python
             - -c
             - |
               import http.server
+              import math
               import random
               import time
+              from datetime import datetime
               from http.server import HTTPServer, BaseHTTPRequestHandler
+
+              # Workload definitions with realistic patterns
+              WORKLOADS = [
+                  {
+                      "node": "gpu-node-1",
+                      "gpu": "0",
+                      "team": "ml-platform",
+                      "model": "recommendation-v2",
+                      "instance_type": "g4dn.xlarge",
+                      "workload_type": "inference",
+                      "base_util": 60,
+                      "variance": 25,
+                  },
+                  {
+                      "node": "gpu-node-1",
+                      "gpu": "1",
+                      "team": "ml-platform",
+                      "model": "recommendation-v2",
+                      "instance_type": "g4dn.xlarge",
+                      "workload_type": "inference",
+                      "base_util": 55,
+                      "variance": 20,
+                  },
+                  {
+                      "node": "gpu-node-2",
+                      "gpu": "0",
+                      "team": "data-science",
+                      "model": "nlp-classifier",
+                      "instance_type": "g4dn.2xlarge",
+                      "workload_type": "training",
+                      "base_util": 85,
+                      "variance": 10,
+                  },
+                  {
+                      "node": "gpu-node-2",
+                      "gpu": "1",
+                      "team": "data-science",
+                      "model": "image-segmentation",
+                      "instance_type": "g4dn.2xlarge",
+                      "workload_type": "training",
+                      "base_util": 90,
+                      "variance": 8,
+                  },
+                  {
+                      "node": "gpu-node-3",
+                      "gpu": "0",
+                      "team": "research",
+                      "model": "llm-finetune",
+                      "instance_type": "p3.2xlarge",
+                      "workload_type": "training",
+                      "base_util": 75,
+                      "variance": 15,
+                  },
+                  {
+                      "node": "gpu-node-3",
+                      "gpu": "1",
+                      "team": "research",
+                      "model": "experimental",
+                      "instance_type": "p3.2xlarge",
+                      "workload_type": "idle",
+                      "base_util": 5,
+                      "variance": 10,
+                  },
+                  {
+                      "node": "gpu-node-4",
+                      "gpu": "0",
+                      "team": "ml-platform",
+                      "model": "embeddings-service",
+                      "instance_type": "g5.xlarge",
+                      "workload_type": "inference",
+                      "base_util": 45,
+                      "variance": 30,
+                  },
+                  {
+                      "node": "gpu-node-4",
+                      "gpu": "1",
+                      "team": "data-science",
+                      "model": "batch-inference",
+                      "instance_type": "g5.xlarge",
+                      "workload_type": "batch",
+                      "base_util": 70,
+                      "variance": 20,
+                  },
+              ]
+
+              def get_time_factor():
+                  """Get utilization factor based on time of day (simulated business hours)."""
+                  hour = datetime.now().hour
+                  # Business hours: 9am-6pm have higher utilization
+                  if 9 <= hour <= 18:
+                      return 1.0
+                  # Evening: moderate utilization (batch jobs)
+                  elif 18 < hour <= 22:
+                      return 0.7
+                  # Night: lower utilization
+                  else:
+                      return 0.4
+
+              def get_utilization(workload):
+                  """Calculate realistic GPU utilization."""
+                  time_factor = get_time_factor()
+                  workload_type = workload["workload_type"]
+                  base = workload["base_util"]
+                  variance = workload["variance"]
+
+                  if workload_type == "training":
+                      # Training jobs: sustained high utilization, less affected by time
+                      util = base + random.gauss(0, variance * 0.3)
+                  elif workload_type == "inference":
+                      # Inference: follows business hours pattern
+                      util = base * time_factor + random.gauss(0, variance)
+                  elif workload_type == "batch":
+                      # Batch: spiky pattern
+                      spike = random.random() > 0.7
+                      util = (90 if spike else 30) + random.gauss(0, 10)
+                  else:  # idle
+                      util = base + random.gauss(0, variance * 0.5)
+
+                  # Add some noise and clamp
+                  noise = math.sin(time.time() / 30) * 5
+                  return max(0, min(100, util + noise))
+
+              def get_temperature(utilization):
+                  """Calculate GPU temperature based on utilization."""
+                  base_temp = 35
+                  util_factor = utilization * 0.45
+                  noise = random.gauss(0, 2)
+                  return max(30, min(95, base_temp + util_factor + noise))
+
+              def get_memory_util(utilization, workload_type):
+                  """Calculate memory utilization."""
+                  if workload_type == "training":
+                      # Training typically uses more memory
+                      return min(95, utilization * 0.9 + random.gauss(20, 5))
+                  elif workload_type == "inference":
+                      # Inference uses consistent memory
+                      return 40 + random.gauss(0, 10)
+                  else:
+                      return utilization * 0.5 + random.gauss(0, 5)
+
+              def get_power(utilization, instance_type):
+                  """Calculate power usage based on instance type and utilization."""
+                  max_power = {
+                      "g4dn.xlarge": 70,
+                      "g4dn.2xlarge": 70,
+                      "g5.xlarge": 130,
+                      "p3.2xlarge": 300,
+                  }.get(instance_type, 100)
+
+                  idle_power = max_power * 0.3
+                  active_power = (max_power - idle_power) * (utilization / 100)
+                  return idle_power + active_power + random.gauss(0, 5)
 
               class MetricsHandler(BaseHTTPRequestHandler):
                   def do_GET(self):
@@ -40,31 +201,58 @@ spec:
                           self.send_header('Content-type', 'text/plain')
                           self.end_headers()
 
-                          # Generate mock GPU metrics
                           metrics = []
-                          for gpu_id in range(2):
-                              util = random.randint(10, 95)
-                              mem_util = random.randint(20, 80)
-                              temp = random.randint(45, 75)
-                              power = random.randint(100, 250)
+                          team_costs = {}
 
-                              metrics.append(f'DCGM_FI_DEV_GPU_UTIL{{gpu="{gpu_id}",node="mock-node-1",team="ml-platform",model="recommendation"}} {util}')
-                              metrics.append(f'DCGM_FI_DEV_MEM_COPY_UTIL{{gpu="{gpu_id}",node="mock-node-1"}} {mem_util}')
-                              metrics.append(f'DCGM_FI_DEV_GPU_TEMP{{gpu="{gpu_id}",node="mock-node-1"}} {temp}')
-                              metrics.append(f'DCGM_FI_DEV_POWER_USAGE{{gpu="{gpu_id}",node="mock-node-1"}} {power}')
+                          # GPU metrics from DCGM
+                          for w in WORKLOADS:
+                              util = get_utilization(w)
+                              temp = get_temperature(util)
+                              mem_util = get_memory_util(util, w["workload_type"])
+                              power = get_power(util, w["instance_type"])
 
-                          # Add some workload metrics
-                          for team in ['ml-platform', 'data-science', 'research']:
-                              cost = random.uniform(50, 200)
-                              metrics.append(f'ai_finops_team_cost_daily{{team="{team}"}} {cost:.2f}')
+                              labels = f'gpu="{w["gpu"]}",node="{w["node"]}",team="{w["team"]}",model="{w["model"]}",instance_type="{w["instance_type"]}"'
 
-                          for model in ['recommendation', 'nlp-classifier', 'image-segmentation']:
-                              inferences = random.randint(1000, 50000)
-                              cost_per = random.uniform(0.001, 0.01)
-                              metrics.append(f'ai_finops_inference_count{{model="{model}"}} {inferences}')
-                              metrics.append(f'ai_finops_cost_per_inference{{model="{model}"}} {cost_per:.6f}')
+                              metrics.append(f'DCGM_FI_DEV_GPU_UTIL{{{labels}}} {util:.1f}')
+                              metrics.append(f'DCGM_FI_DEV_MEM_COPY_UTIL{{{labels}}} {mem_util:.1f}')
+                              metrics.append(f'DCGM_FI_DEV_GPU_TEMP{{{labels}}} {temp:.1f}')
+                              metrics.append(f'DCGM_FI_DEV_POWER_USAGE{{{labels}}} {power:.1f}')
+
+                              # Track team utilization for cost estimation
+                              team = w["team"]
+                              if team not in team_costs:
+                                  team_costs[team] = {"util_sum": 0, "count": 0}
+                              team_costs[team]["util_sum"] += util
+                              team_costs[team]["count"] += 1
+
+                          # Simulated OpenCost-style metrics
+                          k8s_costs = {
+                              "ml-platform": 45.50,
+                              "data-science": 32.25,
+                              "research": 28.00,
+                          }
+
+                          for team, k8s_cost in k8s_costs.items():
+                              # Add some daily variance
+                              variance = random.gauss(0, k8s_cost * 0.1)
+                              cost = max(0, k8s_cost + variance)
+                              metrics.append(f'opencost_namespace_cost_daily{{namespace="{team}"}} {cost:.2f}')
+
+                          # Inference metrics
+                          inference_models = [
+                              ("recommendation-v2", "ml-platform", 15000, 0.0012),
+                              ("nlp-classifier", "data-science", 8000, 0.0025),
+                              ("embeddings-service", "ml-platform", 25000, 0.0008),
+                          ]
+
+                          for model, team, base_count, cost_per in inference_models:
+                              time_factor = get_time_factor()
+                              count = int(base_count * time_factor * random.uniform(0.8, 1.2))
+                              metrics.append(f'ai_finops_inference_count{{model="{model}",team="{team}"}} {count}')
+                              metrics.append(f'ai_finops_cost_per_inference{{model="{model}",team="{team}"}} {cost_per:.6f}')
 
                           self.wfile.write('\n'.join(metrics).encode())
+
                       elif self.path == '/health':
                           self.send_response(200)
                           self.send_header('Content-type', 'text/plain')
@@ -78,6 +266,7 @@ spec:
                       pass  # Suppress logging
 
               print("Starting mock GPU metrics server on port 9400...")
+              print("Simulating 8 GPUs across 4 nodes with realistic patterns")
               server = HTTPServer(('', 9400), MetricsHandler)
               server.serve_forever()
           ports:

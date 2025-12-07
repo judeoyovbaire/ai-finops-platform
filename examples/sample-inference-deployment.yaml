@@ -1,0 +1,163 @@
+# Sample GPU Inference Deployment
+# Demonstrates AI FinOps labeling for model serving workloads
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recommendation-inference
+  namespace: ml-serving
+  labels:
+    ai-finops.io/team: "ml-platform"
+    ai-finops.io/project: "recommendation-engine"
+    ai-finops.io/model: "product-embeddings-v2"
+    ai-finops.io/environment: "production"
+    ai-finops.io/workload-type: "inference"
+  annotations:
+    ai-finops.io/cost-center: "ML-001"
+    ai-finops.io/sla-tier: "platinum"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: recommendation-inference
+  template:
+    metadata:
+      labels:
+        app: recommendation-inference
+        ai-finops.io/team: "ml-platform"
+        ai-finops.io/project: "recommendation-engine"
+        ai-finops.io/model: "product-embeddings-v2"
+        ai-finops.io/environment: "production"
+        ai-finops.io/workload-type: "inference"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: inference-server
+          image: ghcr.io/company/recommendation-inference:v2.1.0
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: grpc
+              containerPort: 8081
+            - name: metrics
+              containerPort: 9090
+          resources:
+            requests:
+              cpu: "2"
+              memory: "8Gi"
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "4"
+              memory: "16Gi"
+              nvidia.com/gpu: "1"
+          env:
+            - name: MODEL_PATH
+              value: "/models/product-embeddings-v2"
+            - name: MAX_BATCH_SIZE
+              value: "32"
+            - name: CUDA_MEMORY_FRACTION
+              value: "0.8"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models
+
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+        node.kubernetes.io/instance-type: "g4dn.xlarge"
+
+      volumes:
+        - name: model-cache
+          emptyDir:
+            sizeLimit: 10Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: recommendation-inference
+  namespace: ml-serving
+  labels:
+    ai-finops.io/team: "ml-platform"
+    ai-finops.io/model: "product-embeddings-v2"
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+    - name: grpc
+      port: 8081
+      targetPort: 8081
+  selector:
+    app: recommendation-inference
+
+---
+# HorizontalPodAutoscaler for cost-efficient scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: recommendation-inference-hpa
+  namespace: ml-serving
+  labels:
+    ai-finops.io/team: "ml-platform"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: recommendation-inference
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    # Scale based on GPU utilization
+    - type: Pods
+      pods:
+        metric:
+          name: DCGM_FI_DEV_GPU_UTIL
+        target:
+          type: AverageValue
+          averageValue: "70"
+    # Also consider request latency
+    - type: Pods
+      pods:
+        metric:
+          name: http_request_duration_seconds_p99
+        target:
+          type: AverageValue
+          averageValue: "100m"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+      selectPolicy: Max

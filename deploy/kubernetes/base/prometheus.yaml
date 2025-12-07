@@ -31,8 +31,8 @@ data:
             regex: metrics
             action: keep
 
-      # Scrape Cost Calculator service
-      - job_name: 'cost-calculator'
+      # Scrape OpenCost for Kubernetes cost allocation
+      - job_name: 'opencost'
         kubernetes_sd_configs:
           - role: endpoints
             namespaces:
@@ -40,7 +40,22 @@ data:
                 - ai-finops
         relabel_configs:
           - source_labels: [__meta_kubernetes_service_name]
-            regex: cost-calculator
+            regex: opencost
+            action: keep
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            regex: http
+            action: keep
+
+      # Scrape GPU Enricher service
+      - job_name: 'gpu-enricher'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - ai-finops
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: gpu-enricher
             action: keep
 
       # Scrape GPU workloads with ai-finops labels
@@ -146,7 +161,7 @@ spec:
       serviceAccountName: prometheus
       containers:
         - name: prometheus
-          image: prom/prometheus:v2.53.0
+          image: prom/prometheus:v3.0.1
           args:
             - '--config.file=/etc/prometheus/prometheus.yml'
             - '--storage.tsdb.path=/prometheus'
