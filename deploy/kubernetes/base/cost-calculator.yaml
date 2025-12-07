@@ -1,0 +1,146 @@
+# Cost Calculator Service
+# Calculates GPU costs based on utilization and cloud pricing
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cost-calculator-config
+  namespace: ai-finops
+data:
+  config.yaml: |
+    # Cloud provider pricing (USD per hour)
+    pricing:
+      aws:
+        g4dn.xlarge:
+          on_demand: 0.526
+          spot_avg: 0.158
+        g4dn.2xlarge:
+          on_demand: 0.752
+          spot_avg: 0.226
+        g4dn.4xlarge:
+          on_demand: 1.204
+          spot_avg: 0.361
+        g5.xlarge:
+          on_demand: 1.006
+          spot_avg: 0.302
+        g5.2xlarge:
+          on_demand: 1.212
+          spot_avg: 0.364
+        p3.2xlarge:
+          on_demand: 3.06
+          spot_avg: 0.918
+        p4d.24xlarge:
+          on_demand: 32.77
+          spot_avg: 9.83
+
+      gcp:
+        n1-standard-4-t4:
+          on_demand: 0.35
+          spot_avg: 0.11
+        n1-standard-8-t4:
+          on_demand: 0.55
+          spot_avg: 0.17
+        a2-highgpu-1g:
+          on_demand: 3.67
+          spot_avg: 1.10
+
+      azure:
+        Standard_NC4as_T4_v3:
+          on_demand: 0.526
+          spot_avg: 0.158
+        Standard_NC8as_T4_v3:
+          on_demand: 0.752
+          spot_avg: 0.226
+
+    # Metric collection settings
+    metrics:
+      scrape_interval: 15s
+      prometheus_url: http://prometheus:9090
+
+    # Cost attribution labels
+    labels:
+      team: ai-finops.io/team
+      project: ai-finops.io/project
+      model: ai-finops.io/model
+      environment: ai-finops.io/environment
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cost-calculator
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: cost-calculator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cost-calculator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cost-calculator
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+        - name: cost-calculator
+          image: ghcr.io/judeoyovbaire/ai-finops-calculator:latest
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: PROMETHEUS_URL
+              value: "http://prometheus:9090"
+            - name: CONFIG_PATH
+              value: "/etc/config/config.yaml"
+            - name: LOG_LEVEL
+              value: "INFO"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/config
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+      volumes:
+        - name: config
+          configMap:
+            name: cost-calculator-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cost-calculator
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: cost-calculator
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  selector:
+    app.kubernetes.io/name: cost-calculator

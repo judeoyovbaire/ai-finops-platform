@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ai-finops
+
+resources:
+  - ../../base
+
+commonLabels:
+  environment: aws
+
+# Production patches
+patchesStrategicMerge:
+  - prometheus-storage-patch.yaml
+  - grafana-storage-patch.yaml

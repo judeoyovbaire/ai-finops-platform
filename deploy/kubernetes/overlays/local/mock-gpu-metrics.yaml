@@ -1,0 +1,109 @@
+# Mock GPU Metrics Generator for Local Development
+# Generates fake GPU metrics for testing dashboards without real GPUs
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-gpu-metrics
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: mock-gpu-metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mock-gpu-metrics
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mock-gpu-metrics
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9400"
+    spec:
+      containers:
+        - name: mock-exporter
+          image: python:3.11-slim
+          command:
+            - python
+            - -c
+            - |
+              import http.server
+              import random
+              import time
+              from http.server import HTTPServer, BaseHTTPRequestHandler
+
+              class MetricsHandler(BaseHTTPRequestHandler):
+                  def do_GET(self):
+                      if self.path == '/metrics':
+                          self.send_response(200)
+                          self.send_header('Content-type', 'text/plain')
+                          self.end_headers()
+
+                          # Generate mock GPU metrics
+                          metrics = []
+                          for gpu_id in range(2):
+                              util = random.randint(10, 95)
+                              mem_util = random.randint(20, 80)
+                              temp = random.randint(45, 75)
+                              power = random.randint(100, 250)
+
+                              metrics.append(f'DCGM_FI_DEV_GPU_UTIL{{gpu="{gpu_id}",node="mock-node-1",team="ml-platform",model="recommendation"}} {util}')
+                              metrics.append(f'DCGM_FI_DEV_MEM_COPY_UTIL{{gpu="{gpu_id}",node="mock-node-1"}} {mem_util}')
+                              metrics.append(f'DCGM_FI_DEV_GPU_TEMP{{gpu="{gpu_id}",node="mock-node-1"}} {temp}')
+                              metrics.append(f'DCGM_FI_DEV_POWER_USAGE{{gpu="{gpu_id}",node="mock-node-1"}} {power}')
+
+                          # Add some workload metrics
+                          for team in ['ml-platform', 'data-science', 'research']:
+                              cost = random.uniform(50, 200)
+                              metrics.append(f'ai_finops_team_cost_daily{{team="{team}"}} {cost:.2f}')
+
+                          for model in ['recommendation', 'nlp-classifier', 'image-segmentation']:
+                              inferences = random.randint(1000, 50000)
+                              cost_per = random.uniform(0.001, 0.01)
+                              metrics.append(f'ai_finops_inference_count{{model="{model}"}} {inferences}')
+                              metrics.append(f'ai_finops_cost_per_inference{{model="{model}"}} {cost_per:.6f}')
+
+                          self.wfile.write('\n'.join(metrics).encode())
+                      elif self.path == '/health':
+                          self.send_response(200)
+                          self.send_header('Content-type', 'text/plain')
+                          self.end_headers()
+                          self.wfile.write(b'OK')
+                      else:
+                          self.send_response(404)
+                          self.end_headers()
+
+                  def log_message(self, format, *args):
+                      pass  # Suppress logging
+
+              print("Starting mock GPU metrics server on port 9400...")
+              server = HTTPServer(('', 9400), MetricsHandler)
+              server.serve_forever()
+          ports:
+            - containerPort: 9400
+              name: metrics
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-gpu-metrics
+  namespace: ai-finops
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9400"
+spec:
+  ports:
+    - port: 9400
+      targetPort: 9400
+      name: metrics
+  selector:
+    app.kubernetes.io/name: mock-gpu-metrics

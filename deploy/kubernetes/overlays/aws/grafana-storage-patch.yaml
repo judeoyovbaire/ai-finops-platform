@@ -1,0 +1,27 @@
+# Use persistent storage for Grafana in AWS
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: ai-finops
+spec:
+  template:
+    spec:
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: grafana-storage
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-storage
+  namespace: ai-finops
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 10Gi

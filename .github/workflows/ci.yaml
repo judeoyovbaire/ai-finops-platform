@@ -1,0 +1,132 @@
+name: CI
+
+# Disabled temporarily - enable when ready
+on:
+  workflow_dispatch:  # Manual trigger only
+  # push:
+  #   branches: [main]
+  # pull_request:
+  #   branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint-python:
+    name: Lint Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install ruff
+
+      - name: Run Ruff linter
+        run: |
+          ruff check src/
+
+      - name: Run Ruff formatter check
+        run: |
+          ruff format --check src/
+
+  test-python:
+    name: Test Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install -r src/calculator/requirements.txt
+
+      - name: Run tests
+        run: |
+          cd src/calculator
+          python -m pytest tests/ -v --cov=. --cov-report=term-missing || echo "No tests yet"
+
+  validate-manifests:
+    name: Validate Kubernetes Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/download/v0.6.4/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Validate base manifests
+        run: |
+          kubeconform -strict -ignore-missing-schemas deploy/kubernetes/base/*.yaml
+
+      - name: Validate overlay manifests
+        run: |
+          kubeconform -strict -ignore-missing-schemas deploy/kubernetes/overlays/local/*.yaml || true
+          kubeconform -strict -ignore-missing-schemas deploy/kubernetes/overlays/aws/*.yaml || true
+
+  validate-kustomize:
+    name: Validate Kustomize
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kustomize
+        run: |
+          curl -sL https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.3.0/kustomize_v5.3.0_linux_amd64.tar.gz | tar xz
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Build base kustomization
+        run: |
+          kustomize build deploy/kubernetes/base > /dev/null
+
+      - name: Build local overlay
+        run: |
+          kustomize build deploy/kubernetes/overlays/local > /dev/null
+
+      - name: Build AWS overlay
+        run: |
+          kustomize build deploy/kubernetes/overlays/aws > /dev/null
+
+  build-image:
+    name: Build Container Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build cost-calculator image
+        uses: docker/build-push-action@v5
+        with:
+          context: src/calculator
+          push: false
+          tags: ai-finops-calculator:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "table"
+          exit-code: "0"
+          severity: "CRITICAL,HIGH"

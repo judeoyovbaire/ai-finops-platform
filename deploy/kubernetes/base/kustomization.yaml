@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ai-finops
+
+resources:
+  - namespace.yaml
+  - dcgm-exporter.yaml
+  - prometheus.yaml
+  - cost-calculator.yaml
+  - grafana.yaml
+  - grafana-dashboards.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: ai-finops-platform

@@ -1,0 +1,27 @@
+# Use persistent storage for Prometheus in AWS
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: ai-finops
+spec:
+  template:
+    spec:
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: prometheus-storage
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-storage
+  namespace: ai-finops
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 50Gi

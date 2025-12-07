@@ -1,0 +1,122 @@
+# NVIDIA DCGM Exporter for GPU Metrics
+# Collects GPU utilization, memory, temperature, and power metrics
+#
+# Prerequisites:
+#   - NVIDIA GPU Operator or NVIDIA drivers installed
+#   - GPU nodes in cluster
+#
+# Metrics exposed:
+#   - DCGM_FI_DEV_GPU_UTIL: GPU utilization %
+#   - DCGM_FI_DEV_MEM_COPY_UTIL: Memory utilization %
+#   - DCGM_FI_DEV_GPU_TEMP: GPU temperature
+#   - DCGM_FI_DEV_POWER_USAGE: Power consumption
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dcgm-exporter
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/component: metrics
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dcgm-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dcgm-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9400"
+    spec:
+      # Only run on GPU nodes
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      containers:
+        - name: dcgm-exporter
+          image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.5-3.4.0-ubuntu22.04
+          ports:
+            - name: metrics
+              containerPort: 9400
+              protocol: TCP
+          env:
+            - name: DCGM_EXPORTER_LISTEN
+              value: ":9400"
+            - name: DCGM_EXPORTER_KUBERNETES
+              value: "true"
+            - name: DCGM_EXPORTER_COLLECTORS
+              value: "/etc/dcgm-exporter/dcp-metrics-included.csv"
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            capabilities:
+              add:
+                - SYS_ADMIN
+          volumeMounts:
+            - name: pod-resources
+              mountPath: /var/lib/kubelet/pod-resources
+              readOnly: true
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+      volumes:
+        - name: pod-resources
+          hostPath:
+            path: /var/lib/kubelet/pod-resources
+            type: Directory
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dcgm-exporter
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: dcgm-exporter
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9400"
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 9400
+      targetPort: 9400
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: dcgm-exporter
+
+---
+# ServiceMonitor for Prometheus Operator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dcgm-exporter
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: dcgm-exporter
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dcgm-exporter
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+  namespaceSelector:
+    matchNames:
+      - ai-finops

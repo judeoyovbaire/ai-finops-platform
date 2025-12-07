@@ -1,0 +1,231 @@
+# Prometheus Configuration for AI FinOps
+# Scrapes GPU metrics and cost calculator metrics
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: ai-finops
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    rule_files:
+      - /etc/prometheus/rules/*.yaml
+
+    scrape_configs:
+      # Scrape DCGM Exporter for GPU metrics
+      - job_name: 'dcgm-exporter'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - ai-finops
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: dcgm-exporter
+            action: keep
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            regex: metrics
+            action: keep
+
+      # Scrape Cost Calculator service
+      - job_name: 'cost-calculator'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - ai-finops
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: cost-calculator
+            action: keep
+
+      # Scrape GPU workloads with ai-finops labels
+      - job_name: 'gpu-workloads'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            regex: "true"
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_label_ai_finops_io_team]
+            target_label: team
+          - source_labels: [__meta_kubernetes_pod_label_ai_finops_io_model]
+            target_label: model
+          - source_labels: [__meta_kubernetes_pod_label_ai_finops_io_project]
+            target_label: project
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: ai-finops
+data:
+  ai-finops-rules.yaml: |
+    groups:
+      - name: ai-finops-alerts
+        rules:
+          # Alert when GPU is idle for extended period
+          - alert: GPUIdleHigh
+            expr: avg by (node, gpu) (DCGM_FI_DEV_GPU_UTIL) < 20
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "GPU idle for 30+ minutes on {{ $labels.node }}"
+              description: "GPU {{ $labels.gpu }} on node {{ $labels.node }} has been below 20% utilization for 30 minutes"
+
+          # Alert on high GPU temperature
+          - alert: GPUTemperatureHigh
+            expr: DCGM_FI_DEV_GPU_TEMP > 85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High GPU temperature on {{ $labels.node }}"
+              description: "GPU temperature is {{ $value }}C on {{ $labels.node }}"
+
+          # Alert on daily budget exceeded
+          - alert: DailyBudgetExceeded
+            expr: sum(ai_finops_team_cost_daily) > 1000
+            labels:
+              severity: critical
+            annotations:
+              summary: "Daily GPU budget exceeded"
+              description: "Total daily GPU cost is ${{ $value }}, exceeding $1000 budget"
+
+          # Alert on team budget exceeded
+          - alert: TeamBudgetExceeded
+            expr: ai_finops_team_cost_daily > 200
+            labels:
+              severity: warning
+            annotations:
+              summary: "Team {{ $labels.team }} exceeded daily budget"
+              description: "Team {{ $labels.team }} has spent ${{ $value }} today"
+
+      - name: ai-finops-recording
+        rules:
+          # Record hourly GPU cost
+          - record: ai_finops:gpu_cost_hourly
+            expr: |
+              sum by (node, instance_type) (
+                DCGM_FI_DEV_GPU_UTIL * 0.01
+                * on(node) group_left(instance_type)
+                kube_node_labels{label_node_kubernetes_io_instance_type!=""}
+              )
+
+          # Record idle GPU hours
+          - record: ai_finops:idle_gpu_hours
+            expr: |
+              sum by (team) (
+                (DCGM_FI_DEV_GPU_UTIL < 10) * 1
+              )
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.53.0
+          args:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+            - '--storage.tsdb.retention.time=15d'
+            - '--web.enable-lifecycle'
+          ports:
+            - containerPort: 9090
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: rules
+              mountPath: /etc/prometheus/rules
+            - name: storage
+              mountPath: /prometheus
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: rules
+          configMap:
+            name: prometheus-rules
+        - name: storage
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: ai-finops
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9090
+      targetPort: 9090
+      name: http
+  selector:
+    app.kubernetes.io/name: prometheus
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: ai-finops
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ai-finops-prometheus
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get"]
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ai-finops-prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ai-finops-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: ai-finops

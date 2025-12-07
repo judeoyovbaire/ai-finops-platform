@@ -1,0 +1,16 @@
+# Disable DCGM Exporter for local development (no real GPUs)
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dcgm-exporter
+  namespace: ai-finops
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dcgm-exporter
+  template:
+    spec:
+      nodeSelector:
+        # This selector won't match any local nodes
+        nvidia.com/gpu.present: "true"
+        local-disabled: "true"
