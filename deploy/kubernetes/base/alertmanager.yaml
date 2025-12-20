@@ -239,7 +239,7 @@ spec:
     spec:
       containers:
         - name: alertmanager
-          image: prom/alertmanager:v0.29.0
+          image: prom/alertmanager:v0.30.0
           args:
             - '--config.file=/etc/alertmanager/alertmanager.yml'
             - '--storage.path=/alertmanager'

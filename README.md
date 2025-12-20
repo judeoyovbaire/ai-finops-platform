@@ -39,7 +39,7 @@ This platform provides comprehensive cost observability for AI infrastructure by
 │                                    │                            │                      │
 │                                    ▼                            │                      │
 │          ┌──────────────────────────────────────────┐           │                      │
-│          │              Prometheus v3.8.0           │           │                      │
+│          │              Prometheus v3.8.1           │           │                      │
 │          └─────────────────────┬────────────────────┘           │                      │
 │                                │                                │                      │
 │           ┌────────────────────┼────────────────────┐           │                      │
@@ -47,7 +47,7 @@ This platform provides comprehensive cost observability for AI infrastructure by
 │           ▼                    ▼                    ▼           │                      │
 │   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐     │  ┌────────────────┐  │
 │   │Alertmanager │      │   Grafana   │      │   Thanos    │     │  │ Cloud Billing  │  │
-│   │   v0.29.0   │      │   v12.3.0   │      │   v0.40.1   │     │  │      APIs      │  │
+│   │   v0.30.0   │      │   v12.3.1   │      │   v0.40.1   │     │  │      APIs      │  │
 │   └──────┬──────┘      └─────────────┘      │             │     │  ├────────────────┤  │
 │          │                                  │ • Query     │     │  │ • AWS Cost     │  │
 │          ▼                                  │ • Store     │     └─▶│   Explorer     │  │
@@ -122,12 +122,12 @@ This platform provides comprehensive cost observability for AI infrastructure by
 
 | Component | Technology | Version | Purpose |
 |-----------|------------|---------|---------|
-| GPU Metrics | NVIDIA DCGM Exporter | 4.4.2 | Collect GPU utilization, memory, temperature |
+| GPU Metrics | NVIDIA DCGM Exporter | 4.4.2-4.7.1 | Collect GPU utilization, memory, temperature |
 | K8s Costs | OpenCost | 1.118.0 | Kubernetes resource cost allocation |
 | GPU Enricher | Python/Flask | 3.12 | Enrich OpenCost with GPU metrics, provide API |
-| Metrics Storage | Prometheus | 3.8.0 | Time-series database for all metrics |
-| Alerting | Alertmanager | 0.29.0 | Alert routing to Slack/PagerDuty/Webhooks |
-| Visualization | Grafana | 12.3.0 | Dashboards and alerting |
+| Metrics Storage | Prometheus | 3.8.1 | Time-series database for all metrics |
+| Alerting | Alertmanager | 0.30.0 | Alert routing to Slack/PagerDuty/Webhooks |
+| Visualization | Grafana | 12.3.1 | Dashboards and alerting |
 | Pricing | Infracost | - | Multi-cloud GPU pricing API |
 | Secrets | External Secrets Operator | - | AWS Secrets Manager integration |
 | Multi-Cluster | Thanos | 0.40.1 | Long-term storage, global queries, deduplication |
