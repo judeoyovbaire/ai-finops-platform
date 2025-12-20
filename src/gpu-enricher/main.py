@@ -23,6 +23,8 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
 )
 
+from auth import auth_manager, initialize_auth, require_auth, optional_auth
+
 # Configure logging
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -1449,7 +1451,9 @@ def preview_chargeback_report():
 # =============================================================================
 
 if __name__ == "__main__":
+    initialize_auth()
     init_enricher()
     port = int(os.getenv("PORT", "8080"))
     logger.info(f"Starting AI FinOps GPU Enricher on port {port}")
+    logger.info(f"API authentication: {'enabled' if auth_manager.is_enabled else 'disabled'}")
     app.run(host="0.0.0.0", port=port)

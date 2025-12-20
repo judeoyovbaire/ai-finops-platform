@@ -1,0 +1,106 @@
+---
+# ServiceAccount for GPU Enricher
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gpu-enricher
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: gpu-enricher
+    app.kubernetes.io/component: service
+    app.kubernetes.io/part-of: ai-finops
+
+---
+# Role for GPU Enricher - minimal permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gpu-enricher
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: gpu-enricher
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: ai-finops
+rules:
+  # Read ConfigMaps for configuration
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  # Read Secrets for API keys and credentials
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  # Read pods for label information
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+
+---
+# RoleBinding for GPU Enricher
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gpu-enricher
+  namespace: ai-finops
+  labels:
+    app.kubernetes.io/name: gpu-enricher
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: ai-finops
+subjects:
+  - kind: ServiceAccount
+    name: gpu-enricher
+    namespace: ai-finops
+roleRef:
+  kind: Role
+  name: gpu-enricher
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ClusterRole for reading node and namespace information
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gpu-enricher-cluster-reader
+  labels:
+    app.kubernetes.io/name: gpu-enricher
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: ai-finops
+rules:
+  # Read nodes for GPU labels and instance types
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  # Read namespaces for team mapping
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+  # Read pods across namespaces for cost attribution
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Read deployments and jobs for workload information
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]
+
+---
+# ClusterRoleBinding for GPU Enricher
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gpu-enricher-cluster-reader
+  labels:
+    app.kubernetes.io/name: gpu-enricher
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: ai-finops
+subjects:
+  - kind: ServiceAccount
+    name: gpu-enricher
+    namespace: ai-finops
+roleRef:
+  kind: ClusterRole
+  name: gpu-enricher-cluster-reader
+  apiGroup: rbac.authorization.k8s.io

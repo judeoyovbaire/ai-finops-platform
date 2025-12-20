@@ -1,0 +1,745 @@
+openapi: 3.0.3
+info:
+  title: AI FinOps Platform API
+  description: |
+    Cost optimization platform API for AI/ML workloads on Kubernetes.
+
+    Provides GPU utilization monitoring, cost tracking, budget forecasting,
+    anomaly detection, and right-sizing recommendations.
+
+    ## Authentication
+
+    When API authentication is enabled, include your API key in requests:
+    - Header: `X-API-Key: your-api-key`
+    - Query parameter: `?api_key=your-api-key`
+    - Bearer token: `Authorization: Bearer your-api-key`
+
+    ## Rate Limiting
+
+    Default rate limits are 100 requests per minute per API key.
+    Rate limit headers are included in responses:
+    - `X-RateLimit-Limit`: Maximum requests per window
+    - `X-RateLimit-Remaining`: Remaining requests in window
+    - `X-RateLimit-Reset`: Time until rate limit resets
+  version: 1.0.0
+  contact:
+    name: AI FinOps Platform
+    url: https://github.com/judeoyovbaire/ai-finops-platform
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://finops-api.example.com
+    description: Production
+
+tags:
+  - name: Health
+    description: Service health and readiness checks
+  - name: Costs
+    description: Cost summary and team-level cost breakdown
+  - name: Budget
+    description: Budget forecasting and alerts
+  - name: GPU
+    description: GPU utilization and metrics
+  - name: Recommendations
+    description: Cost optimization recommendations
+  - name: Analytics
+    description: Advanced analytics (anomaly detection, right-sizing)
+  - name: Billing
+    description: Cloud billing integration
+  - name: Reports
+    description: Chargeback reports
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Returns service health status
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+
+  /ready:
+    get:
+      tags: [Health]
+      summary: Readiness check
+      description: Returns service readiness status
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+        '503':
+          description: Service not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /metrics:
+    get:
+      tags: [Health]
+      summary: Prometheus metrics
+      description: Returns Prometheus-format metrics
+      responses:
+        '200':
+          description: Metrics in Prometheus format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /api/v1/costs/summary:
+    get:
+      tags: [Costs]
+      summary: Get cost summary
+      description: Returns cost breakdown by team including GPU and Kubernetes costs
+      responses:
+        '200':
+          description: Cost summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CostSummary'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/costs/team/{team}:
+    get:
+      tags: [Costs]
+      summary: Get team costs
+      description: Returns detailed cost breakdown for a specific team
+      parameters:
+        - name: team
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Team name
+      responses:
+        '200':
+          description: Team cost details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamCost'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/budget/forecast:
+    get:
+      tags: [Budget]
+      summary: Get budget forecasts
+      description: Returns budget forecasts for all teams
+      responses:
+        '200':
+          description: Budget forecasts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BudgetForecastResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/budget/forecast/{team}:
+    get:
+      tags: [Budget]
+      summary: Get team budget forecast
+      description: Returns detailed budget forecast for a specific team
+      parameters:
+        - name: team
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Team name
+      responses:
+        '200':
+          description: Team budget forecast
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamBudgetForecast'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/budget/alerts:
+    get:
+      tags: [Budget]
+      summary: Get budget alerts
+      description: Returns teams that are over budget or at risk
+      responses:
+        '200':
+          description: Budget alerts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BudgetAlerts'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/gpu/utilization:
+    get:
+      tags: [GPU]
+      summary: Get GPU utilization
+      description: Returns current GPU utilization metrics by node and team
+      responses:
+        '200':
+          description: GPU utilization metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GPUUtilization'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/recommendations:
+    get:
+      tags: [Recommendations]
+      summary: Get recommendations
+      description: Returns cost optimization recommendations
+      parameters:
+        - name: team
+          in: query
+          schema:
+            type: string
+          description: Filter by team
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [low, medium, high]
+          description: Filter by severity
+      responses:
+        '200':
+          description: Recommendations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recommendations'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/trends/costs:
+    get:
+      tags: [Analytics]
+      summary: Get cost trends
+      description: Returns historical cost trend data
+      parameters:
+        - name: team
+          in: query
+          schema:
+            type: string
+          description: Filter by team
+        - name: period
+          in: query
+          schema:
+            type: string
+            enum: [7d, 30d, 90d]
+            default: 7d
+          description: Time period
+      responses:
+        '200':
+          description: Cost trends
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CostTrends'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/anomalies:
+    get:
+      tags: [Analytics]
+      summary: Get anomalies
+      description: Returns detected cost and utilization anomalies
+      parameters:
+        - name: team
+          in: query
+          schema:
+            type: string
+          description: Filter by team
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [low, medium, high, critical]
+          description: Filter by severity
+      responses:
+        '200':
+          description: Detected anomalies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Anomalies'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/rightsizing:
+    get:
+      tags: [Analytics]
+      summary: Get right-sizing recommendations
+      description: Returns automated right-sizing recommendations for GPU instances
+      parameters:
+        - name: team
+          in: query
+          schema:
+            type: string
+          description: Filter by team
+        - name: min_savings
+          in: query
+          schema:
+            type: number
+          description: Minimum daily savings threshold
+      responses:
+        '200':
+          description: Right-sizing recommendations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RightsizingRecommendations'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/billing/actual:
+    get:
+      tags: [Billing]
+      summary: Get actual billing
+      description: Returns actual billing data from cloud provider
+      parameters:
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 30
+          description: Number of days to fetch
+      responses:
+        '200':
+          description: Actual billing data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActualBilling'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/billing/comparison:
+    get:
+      tags: [Billing]
+      summary: Compare billing
+      description: Compares estimated costs with actual billing
+      responses:
+        '200':
+          description: Billing comparison
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingComparison'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/reports/chargeback:
+    get:
+      tags: [Reports]
+      summary: Generate chargeback report
+      description: Generates a chargeback report in the specified format
+      parameters:
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [csv, pdf, json]
+            default: csv
+          description: Report format
+      responses:
+        '200':
+          description: Chargeback report
+          content:
+            text/csv:
+              schema:
+                type: string
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                type: object
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/reports/chargeback/preview:
+    get:
+      tags: [Reports]
+      summary: Preview chargeback report
+      description: Returns a preview of chargeback report data
+      responses:
+        '200':
+          description: Report preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChargebackPreview'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+components:
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+
+    CostSummary:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        totals:
+          type: object
+          properties:
+            gpu_cost_daily:
+              type: number
+            k8s_cost_daily:
+              type: number
+            total_cost_daily:
+              type: number
+            idle_gpu_hours:
+              type: number
+        teams:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/TeamCost'
+
+    TeamCost:
+      type: object
+      properties:
+        team:
+          type: string
+        gpu_cost_daily:
+          type: number
+        k8s_cost_daily:
+          type: number
+        total_cost_daily:
+          type: number
+        gpu_count:
+          type: integer
+        avg_utilization:
+          type: number
+        idle_gpu_hours:
+          type: number
+
+    BudgetForecastResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        totals:
+          type: object
+          properties:
+            monthly_budget:
+              type: number
+            current_spend:
+              type: number
+            projected_eom_spend:
+              type: number
+            budget_remaining:
+              type: number
+        forecasts:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeamBudgetForecast'
+
+    TeamBudgetForecast:
+      type: object
+      properties:
+        team:
+          type: string
+        current_spend:
+          type: number
+        monthly_budget:
+          type: number
+        budget_remaining:
+          type: number
+        days_elapsed:
+          type: integer
+        days_remaining:
+          type: integer
+        daily_avg_spend:
+          type: number
+        projected_eom_spend:
+          type: number
+        burn_rate_pct:
+          type: number
+        days_until_exhaustion:
+          type: number
+          nullable: true
+        status:
+          type: string
+          enum: [on_track, warning, critical, exceeded]
+        trend:
+          type: string
+          enum: [increasing, stable, decreasing]
+
+    BudgetAlerts:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        alerts:
+          type: array
+          items:
+            type: object
+            properties:
+              team:
+                type: string
+              status:
+                type: string
+              current_spend:
+                type: number
+              monthly_budget:
+                type: number
+              projected_eom_spend:
+                type: number
+              days_until_exhaustion:
+                type: number
+              message:
+                type: string
+        count:
+          type: integer
+
+    GPUUtilization:
+      type: object
+      properties:
+        gpus:
+          type: array
+          items:
+            type: object
+            properties:
+              node:
+                type: string
+              gpu_id:
+                type: string
+              utilization:
+                type: number
+              memory_util:
+                type: number
+              temperature:
+                type: number
+              team:
+                type: string
+              model:
+                type: string
+              is_idle:
+                type: boolean
+        count:
+          type: integer
+
+    Recommendations:
+      type: object
+      properties:
+        recommendations:
+          type: array
+          items:
+            type: object
+            properties:
+              team:
+                type: string
+              type:
+                type: string
+              severity:
+                type: string
+              title:
+                type: string
+              description:
+                type: string
+              potential_savings_daily:
+                type: number
+              affected_resources:
+                type: array
+                items:
+                  type: string
+        total_potential_savings_daily:
+          type: number
+        count:
+          type: integer
+
+    CostTrends:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        period:
+          type: string
+        trends:
+          type: array
+          items:
+            type: object
+            properties:
+              team:
+                type: string
+              period:
+                type: string
+              avg_daily_cost:
+                type: number
+
+    Anomalies:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        anomalies:
+          type: array
+          items:
+            type: object
+            properties:
+              team:
+                type: string
+              type:
+                type: string
+              severity:
+                type: string
+              description:
+                type: string
+              detected_at:
+                type: string
+                format: date-time
+        count:
+          type: integer
+
+    RightsizingRecommendations:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        summary:
+          type: object
+          properties:
+            total_recommendations:
+              type: integer
+            potential_savings_daily:
+              type: number
+            potential_savings_monthly:
+              type: number
+        recommendations:
+          type: array
+          items:
+            type: object
+
+    ActualBilling:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        period:
+          type: object
+          properties:
+            start:
+              type: string
+              format: date-time
+            end:
+              type: string
+              format: date-time
+            days:
+              type: integer
+        teams:
+          type: object
+
+    BillingComparison:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: string
+        comparison:
+          type: array
+          items:
+            type: object
+        totals:
+          type: object
+
+    ChargebackPreview:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        period:
+          type: object
+        summary:
+          type: object
+        teams:
+          type: array
+        recommendations_count:
+          type: integer
+        available_formats:
+          type: array
+          items:
+            type: string
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    ServiceUnavailable:
+      description: Service unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  securitySchemes:
+    ApiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    ApiKeyQuery:
+      type: apiKey
+      in: query
+      name: api_key
+    BearerAuth:
+      type: http
+      scheme: bearer
+
+security:
+  - ApiKeyHeader: []
+  - ApiKeyQuery: []
+  - BearerAuth: []
