@@ -44,58 +44,28 @@ def load_thresholds() -> ThresholdConfig:
     """Load thresholds from environment variables with defaults."""
     return ThresholdConfig(
         # GPU Utilization
-        idle_gpu_threshold=float(
-            os.getenv("THRESHOLD_IDLE_GPU", "20.0")
-        ),
-        underutilized_threshold=float(
-            os.getenv("THRESHOLD_UNDERUTILIZED", "30.0")
-        ),
-        overutilized_threshold=float(
-            os.getenv("THRESHOLD_OVERUTILIZED", "85.0")
-        ),
+        idle_gpu_threshold=float(os.getenv("THRESHOLD_IDLE_GPU", "20.0")),
+        underutilized_threshold=float(os.getenv("THRESHOLD_UNDERUTILIZED", "30.0")),
+        overutilized_threshold=float(os.getenv("THRESHOLD_OVERUTILIZED", "85.0")),
         memory_underutilized_threshold=float(
             os.getenv("THRESHOLD_MEMORY_UNDERUTILIZED", "40.0")
         ),
         # Temperature
-        temp_warning_threshold=float(
-            os.getenv("THRESHOLD_TEMP_WARNING", "75.0")
-        ),
-        temp_high_threshold=float(
-            os.getenv("THRESHOLD_TEMP_HIGH", "85.0")
-        ),
-        temp_critical_threshold=float(
-            os.getenv("THRESHOLD_TEMP_CRITICAL", "90.0")
-        ),
+        temp_warning_threshold=float(os.getenv("THRESHOLD_TEMP_WARNING", "75.0")),
+        temp_high_threshold=float(os.getenv("THRESHOLD_TEMP_HIGH", "85.0")),
+        temp_critical_threshold=float(os.getenv("THRESHOLD_TEMP_CRITICAL", "90.0")),
         # Anomaly Detection
-        zscore_threshold=float(
-            os.getenv("THRESHOLD_ZSCORE", "2.5")
-        ),
-        iqr_multiplier=float(
-            os.getenv("THRESHOLD_IQR_MULTIPLIER", "1.5")
-        ),
-        cost_spike_threshold=float(
-            os.getenv("THRESHOLD_COST_SPIKE", "50.0")
-        ),
-        cost_drop_threshold=float(
-            os.getenv("THRESHOLD_COST_DROP", "30.0")
-        ),
+        zscore_threshold=float(os.getenv("THRESHOLD_ZSCORE", "2.5")),
+        iqr_multiplier=float(os.getenv("THRESHOLD_IQR_MULTIPLIER", "1.5")),
+        cost_spike_threshold=float(os.getenv("THRESHOLD_COST_SPIKE", "50.0")),
+        cost_drop_threshold=float(os.getenv("THRESHOLD_COST_DROP", "30.0")),
         # Right-sizing
-        spot_eligible_threshold=float(
-            os.getenv("THRESHOLD_SPOT_ELIGIBLE", "70.0")
-        ),
-        min_data_points=int(
-            os.getenv("THRESHOLD_MIN_DATA_POINTS", "24")
-        ),
-        high_confidence_threshold=float(
-            os.getenv("THRESHOLD_HIGH_CONFIDENCE", "0.8")
-        ),
+        spot_eligible_threshold=float(os.getenv("THRESHOLD_SPOT_ELIGIBLE", "70.0")),
+        min_data_points=int(os.getenv("THRESHOLD_MIN_DATA_POINTS", "24")),
+        high_confidence_threshold=float(os.getenv("THRESHOLD_HIGH_CONFIDENCE", "0.8")),
         # Rate Limiting
-        default_rate_limit=int(
-            os.getenv("DEFAULT_RATE_LIMIT", "100")
-        ),
-        notification_rate_limit=int(
-            os.getenv("NOTIFICATION_RATE_LIMIT", "30")
-        ),
+        default_rate_limit=int(os.getenv("DEFAULT_RATE_LIMIT", "100")),
+        notification_rate_limit=int(os.getenv("NOTIFICATION_RATE_LIMIT", "30")),
     )
 
 

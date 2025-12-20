@@ -1264,7 +1264,10 @@ def get_notification_sender():
         with _module_lock:
             if _notification_sender is None:
                 try:
-                    from notifications import notification_sender, initialize_notifications
+                    from notifications import (
+                        notification_sender,
+                        initialize_notifications,
+                    )
 
                     initialize_notifications()
                     _notification_sender = notification_sender
