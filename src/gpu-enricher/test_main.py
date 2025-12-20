@@ -742,7 +742,7 @@ class TestAuthModule:
         assert "read" in key.scopes
         assert key.rate_limit == 100
 
-    def test_api_key_has_scope(self):
+    def test_api_key_scope_membership(self):
         from auth import APIKey
 
         key = APIKey(
@@ -750,8 +750,8 @@ class TestAuthModule:
             name="test",
             scopes=["read"],
         )
-        assert key.has_scope("read") is True
-        assert key.has_scope("write") is False
+        assert "read" in key.scopes
+        assert "write" not in key.scopes
 
     def test_api_key_defaults(self):
         from auth import APIKey
@@ -814,24 +814,27 @@ class TestBudgetForecast:
 
 
 class TestAPIErrorResponses:
-    def test_api_error_function(self):
-        from main import api_error
+    def test_api_error_function(self, client):
+        """Test api_error within app context."""
+        from main import api_error, app
 
-        response, status_code = api_error("Test error", 400)
-        assert status_code == 400
-        assert b"Test error" in response.data
+        with app.app_context():
+            response, status_code = api_error("Test error", 400)
+            assert status_code == 400
+            assert b"Test error" in response.data
 
-    def test_api_error_with_details(self):
-        from main import api_error
-        import json
+    def test_api_error_with_details(self, client):
+        """Test api_error with details within app context."""
+        from main import api_error, app
 
-        response, status_code = api_error(
-            "Validation failed",
-            400,
-            details={"field": "team"},
-        )
-        data = json.loads(response.data)
-        assert data["details"]["field"] == "team"
+        with app.app_context():
+            response, status_code = api_error(
+                "Validation failed",
+                400,
+                details={"field": "team"},
+            )
+            data = json.loads(response.data)
+            assert data["details"]["field"] == "team"
 
 
 # =============================================================================

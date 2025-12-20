@@ -15,7 +15,7 @@ from typing import Optional
 
 import requests
 import yaml
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request
 from prometheus_client import (
     Counter,
     Gauge,
@@ -30,16 +30,7 @@ from auth import (
     require_auth,
     _add_rate_limit_headers,
 )
-from config import (
-    thresholds,
-    ValidationError,
-    validate_team_name,
-    validate_severity,
-    validate_period,
-    validate_days,
-    validate_min_savings,
-    validate_report_format,
-)
+from config import ValidationError
 
 # Configure logging
 logging.basicConfig(
