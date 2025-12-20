@@ -1,4 +1,6 @@
-FROM python:3.12-slim
+# Pin to specific digest for reproducible builds and supply chain security
+# To update: docker pull python:3.12-slim && docker inspect --format='{{index .RepoDigests 0}}' python:3.12-slim
+FROM python:3.12-slim@sha256:a866731a6b71c4a194a845d86e06568725e430ed21821d0c52e102c3d34c5622
 
 WORKDIR /app
 

@@ -458,7 +458,7 @@ groups:
 - [x] Cloud billing API integration (AWS Cost Explorer)
 - [x] Chargeback report generation (PDF/CSV/JSON)
 - [x] Multi-cluster aggregation (Thanos)
-- [ ] CI/CD pipeline enablement
+- [x] CI/CD pipeline (GitHub Actions with lint, test, build, security scan)
 
 ### Future Enhancements
 - [ ] GCP Cloud Billing API integration
@@ -501,6 +501,196 @@ make test-cov
 
 # Lint code
 make lint
+```
+
+## Deployment Guide
+
+### Production Deployment Checklist
+
+Before deploying to production, ensure:
+
+- [ ] Kubernetes cluster is running (1.21+)
+- [ ] GPU nodes have NVIDIA drivers installed (for real GPU metrics)
+- [ ] kubectl is configured with cluster access
+- [ ] Required secrets are configured
+
+### Step 1: Configure Secrets
+
+**Option A: Using External Secrets Operator (Recommended for AWS)**
+
+```bash
+# Install External Secrets Operator
+helm repo add external-secrets https://charts.external-secrets.io
+helm install external-secrets external-secrets/external-secrets -n external-secrets --create-namespace
+
+# Create SecretStore pointing to AWS Secrets Manager
+kubectl apply -f deploy/kubernetes/base/external-secrets.yaml
+```
+
+**Option B: Direct Kubernetes Secrets**
+
+```bash
+# Create namespace
+kubectl create namespace ai-finops
+
+# Create secrets for Grafana
+kubectl create secret generic grafana-credentials \
+  --from-literal=admin-user=admin \
+  --from-literal=admin-password=<your-secure-password> \
+  -n ai-finops
+
+# Create secrets for Slack notifications (if using)
+kubectl create secret generic alertmanager-slack \
+  --from-literal=webhook-url=<your-slack-webhook-url> \
+  -n ai-finops
+
+# Create secrets for AWS Cost Explorer (if using billing integration)
+kubectl create secret generic aws-credentials \
+  --from-literal=aws-access-key-id=<your-access-key> \
+  --from-literal=aws-secret-access-key=<your-secret-key> \
+  -n ai-finops
+```
+
+### Step 2: Configure API Authentication (Optional)
+
+Enable API authentication for production:
+
+```bash
+# Set environment variables in gpu-enricher deployment
+kubectl set env deployment/gpu-enricher \
+  ENABLE_API_AUTH=true \
+  API_KEY_READONLY=<generate-secure-key> \
+  API_KEY_READONLY_SCOPES=read \
+  API_KEY_ADMIN=<generate-secure-key> \
+  API_KEY_ADMIN_SCOPES=read,write,admin \
+  -n ai-finops
+```
+
+### Step 3: Deploy to AWS EKS
+
+```bash
+# Deploy using AWS overlay (includes persistent storage)
+make deploy-aws
+
+# Verify all pods are running
+kubectl get pods -n ai-finops
+
+# Expected output:
+# NAME                            READY   STATUS    RESTARTS   AGE
+# alertmanager-xxx                1/1     Running   0          1m
+# dcgm-exporter-xxx               1/1     Running   0          1m
+# gpu-enricher-xxx                1/1     Running   0          1m
+# grafana-xxx                     1/1     Running   0          1m
+# opencost-xxx                    1/1     Running   0          1m
+# prometheus-xxx                  1/1     Running   0          1m
+# thanos-query-xxx                1/1     Running   0          1m
+# thanos-store-xxx                1/1     Running   0          1m
+```
+
+### Step 4: Configure Ingress (Optional)
+
+For external access, configure an ingress controller:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-finops-ingress
+  namespace: ai-finops
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/certificate-arn: <your-acm-cert-arn>
+spec:
+  rules:
+    - host: finops.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 3000
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: gpu-enricher
+                port:
+                  number: 8080
+```
+
+### Step 5: Configure Thanos for Multi-Cluster (Optional)
+
+For long-term storage and multi-cluster queries:
+
+```bash
+# Create S3 bucket for Thanos
+aws s3 mb s3://your-thanos-bucket --region us-east-1
+
+# Create Thanos storage secret
+kubectl create secret generic thanos-objstore-config \
+  --from-file=objstore.yml=thanos-s3-config.yaml \
+  -n ai-finops
+```
+
+Example `thanos-s3-config.yaml`:
+```yaml
+type: S3
+config:
+  bucket: your-thanos-bucket
+  endpoint: s3.us-east-1.amazonaws.com
+  region: us-east-1
+  access_key: ${AWS_ACCESS_KEY_ID}
+  secret_key: ${AWS_SECRET_ACCESS_KEY}
+```
+
+### Step 6: Verify Deployment
+
+```bash
+# Check service health
+curl http://localhost:8080/health
+
+# Check GPU Enricher readiness
+curl http://localhost:8080/ready
+
+# Verify metrics are being collected
+curl http://localhost:9090/api/v1/query?query=DCGM_FI_DEV_GPU_UTIL
+
+# Access Grafana dashboard
+# Navigate to http://localhost:3000 (or your ingress URL)
+# Default credentials: admin/admin
+```
+
+### Troubleshooting
+
+**No GPU metrics appearing:**
+```bash
+# Check DCGM exporter is running
+kubectl logs -l app=dcgm-exporter -n ai-finops
+
+# Verify GPU drivers on nodes
+kubectl get nodes -o jsonpath='{.items[*].status.allocatable.nvidia\.com/gpu}'
+```
+
+**OpenCost not showing costs:**
+```bash
+# Check OpenCost logs
+kubectl logs -l app=opencost -n ai-finops
+
+# Verify Prometheus is scraping OpenCost
+curl http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job == "opencost")'
+```
+
+**High memory usage in Prometheus:**
+```bash
+# Check current memory usage
+kubectl top pod -l app=prometheus -n ai-finops
+
+# Adjust retention and memory limits in prometheus.yaml
+# Recommended: 15d retention, 2Gi memory for small clusters
 ```
 
 ## Contributing

@@ -19,6 +19,9 @@ resources:
   - gpu-enricher.yaml
   - infracost.yaml
 
+  # Multi-cluster aggregation
+  - thanos.yaml
+
   # Visualization
   - grafana.yaml
   - grafana-dashboards.yaml

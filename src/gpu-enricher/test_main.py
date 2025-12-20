@@ -855,16 +855,12 @@ class TestThreadSafety:
             get_anomaly_detector,
             get_rightsizing_engine,
             get_billing_integration,
-            get_report_generator,
-            get_notification_sender,
         )
 
         # These functions should exist and be callable
         assert callable(get_anomaly_detector)
         assert callable(get_rightsizing_engine)
         assert callable(get_billing_integration)
-        assert callable(get_report_generator)
-        assert callable(get_notification_sender)
 
 
 if __name__ == "__main__":

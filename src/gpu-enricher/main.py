@@ -30,7 +30,6 @@ from auth import (
     require_auth,
     _add_rate_limit_headers,
 )
-from config import ValidationError
 
 # Configure logging
 logging.basicConfig(
@@ -624,15 +623,6 @@ def api_error(message: str, status_code: int = 500, details: Optional[dict] = No
     return jsonify(response), status_code
 
 
-def handle_validation_error(e: ValidationError):
-    """Handle validation errors with consistent format."""
-    return api_error(
-        message=e.message,
-        status_code=400,
-        details={"field": e.field},
-    )
-
-
 # =============================================================================
 # API Endpoints
 # =============================================================================
@@ -1190,8 +1180,6 @@ def cost_trends():
 _anomaly_detector = None
 _rightsizing_engine = None
 _billing_integration = None
-_report_generator = None
-_notification_sender = None
 
 
 def get_anomaly_detector():
@@ -1240,42 +1228,6 @@ def get_billing_integration():
                 except Exception as e:
                     logger.error(f"Failed to initialize billing integration: {e}")
     return _billing_integration
-
-
-def get_report_generator():
-    """Lazy load report generator with thread safety."""
-    global _report_generator
-    if _report_generator is None:
-        with _module_lock:
-            if _report_generator is None:
-                try:
-                    from reports import report_generator
-
-                    _report_generator = report_generator
-                except ImportError:
-                    logger.warning("Report generation module not available")
-    return _report_generator
-
-
-def get_notification_sender():
-    """Lazy load notification sender with thread safety."""
-    global _notification_sender
-    if _notification_sender is None:
-        with _module_lock:
-            if _notification_sender is None:
-                try:
-                    from notifications import (
-                        notification_sender,
-                        initialize_notifications,
-                    )
-
-                    initialize_notifications()
-                    _notification_sender = notification_sender
-                except ImportError:
-                    logger.warning("Notifications module not available")
-                except Exception as e:
-                    logger.error(f"Failed to initialize notifications: {e}")
-    return _notification_sender
 
 
 @app.route("/api/v1/anomalies")
@@ -1547,18 +1499,11 @@ def generate_chargeback_report():
         summary = enricher.get_cost_summary()
         recommendations = enricher.get_recommendations()
 
-        # Get anomalies if available
-        anomalies = []
-        detector = get_anomaly_detector()
-        if detector:
-            # Simplified anomaly detection for report
-            pass
-
         # Generate report
         content, content_type, filename = generate_monthly_chargeback_report(
             team_data=summary.get("teams", {}),
             recommendations=recommendations,
-            anomalies=anomalies,
+            anomalies=[],
             format=report_format,
         )
 
