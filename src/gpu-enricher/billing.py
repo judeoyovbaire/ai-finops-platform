@@ -205,7 +205,9 @@ class AWSCostExplorer:
                                 {
                                     "Dimensions": {
                                         "Key": "SERVICE",
-                                        "Values": ["Amazon Elastic Compute Cloud - Compute"],
+                                        "Values": [
+                                            "Amazon Elastic Compute Cloud - Compute"
+                                        ],
                                     }
                                 },
                                 {
@@ -417,9 +419,7 @@ class AWSCostExplorer:
             total = response.get("Total", {})
 
             return {
-                "utilization_percentage": float(
-                    total.get("UtilizationPercentage", 0)
-                ),
+                "utilization_percentage": float(total.get("UtilizationPercentage", 0)),
                 "purchased_hours": float(total.get("PurchasedHours", 0)),
                 "total_actual_hours": float(total.get("TotalActualHours", 0)),
                 "unused_hours": float(total.get("UnusedHours", 0)),
@@ -911,14 +911,18 @@ class BillingIntegration:
             variance = estimated - actual_daily
             variance_pct = (variance / actual_daily * 100) if actual_daily else 0
 
-            comparison.append({
-                "team": team,
-                "estimated_daily": round(estimated, 2),
-                "actual_daily": round(actual_daily, 2),
-                "variance": round(variance, 2),
-                "variance_pct": round(variance_pct, 1),
-                "accuracy": round(100 - abs(variance_pct), 1) if actual_daily else None,
-            })
+            comparison.append(
+                {
+                    "team": team,
+                    "estimated_daily": round(estimated, 2),
+                    "actual_daily": round(actual_daily, 2),
+                    "variance": round(variance, 2),
+                    "variance_pct": round(variance_pct, 1),
+                    "accuracy": round(100 - abs(variance_pct), 1)
+                    if actual_daily
+                    else None,
+                }
+            )
 
             total_estimated += estimated
             total_actual += actual_daily
@@ -971,7 +975,11 @@ def initialize_billing():
                 resource_group=azure_resource_group,
             )
         else:
-            logger.warning("AZURE_SUBSCRIPTION_ID not set, skipping Azure billing integration")
+            logger.warning(
+                "AZURE_SUBSCRIPTION_ID not set, skipping Azure billing integration"
+            )
 
     if billing_integration.is_enabled:
-        logger.info(f"Billing integration enabled for: {billing_integration.enabled_providers}")
+        logger.info(
+            f"Billing integration enabled for: {billing_integration.enabled_providers}"
+        )

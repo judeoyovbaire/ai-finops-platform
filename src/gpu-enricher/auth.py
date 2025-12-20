@@ -71,7 +71,9 @@ class AuthManager:
         # Format: API_KEY_<name>_SCOPES=read,write
         # Format: API_KEY_<name>_TEAM=team-name
         for key, value in os.environ.items():
-            if key.startswith("API_KEY_") and not key.endswith(("_SCOPES", "_TEAM", "_RATE_LIMIT")):
+            if key.startswith("API_KEY_") and not key.endswith(
+                ("_SCOPES", "_TEAM", "_RATE_LIMIT")
+            ):
                 name = key[8:]  # Remove "API_KEY_" prefix
                 key_hash = self._hash_key(value)
 

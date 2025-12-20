@@ -354,7 +354,9 @@ class RightsizingEngine:
         )
 
         if data_points < self.MIN_DATA_POINTS:
-            logger.debug(f"Insufficient data for {node}/gpu{gpu_id}: {data_points} points")
+            logger.debug(
+                f"Insufficient data for {node}/gpu{gpu_id}: {data_points} points"
+            )
             return None
 
         # Calculate confidence based on data points and consistency
@@ -390,7 +392,10 @@ class RightsizingEngine:
             )
 
         # Check for downsize
-        if avg_util < self.UNDERUTILIZED_THRESHOLD and avg_memory < self.MEMORY_UNDERUTILIZED_THRESHOLD:
+        if (
+            avg_util < self.UNDERUTILIZED_THRESHOLD
+            and avg_memory < self.MEMORY_UNDERUTILIZED_THRESHOLD
+        ):
             smaller = self.find_smaller_instance(instance_key)
             if smaller:
                 smaller_spec = self.catalog[smaller]

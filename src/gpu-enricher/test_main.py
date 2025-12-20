@@ -55,9 +55,7 @@ def sample_config():
 @pytest.fixture
 def config_file(sample_config):
     """Create a temporary config file."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         yaml.dump(sample_config, f)
         yield f.name
     os.unlink(f.name)
@@ -354,7 +352,9 @@ class TestGPUEnricher:
         assert allocations["ml-platform"] == 25.50
 
     @responses.activate
-    def test_calculate_costs(self, enricher, mock_prometheus_gpu_util, mock_opencost_response):
+    def test_calculate_costs(
+        self, enricher, mock_prometheus_gpu_util, mock_opencost_response
+    ):
         # Setup all mock responses
         responses.add(
             responses.GET,
@@ -437,6 +437,7 @@ class TestAPIEndpoints:
     def test_ready_endpoint_not_initialized(self, client):
         # Enricher is not initialized in test client by default
         import main
+
         main.enricher = None
 
         response = client.get("/ready")
@@ -444,6 +445,7 @@ class TestAPIEndpoints:
 
     def test_ready_endpoint_initialized(self, client, config_file):
         import main
+
         main.enricher = GPUEnricher(
             config_path=config_file,
             prometheus_url="http://localhost:9090",
@@ -456,7 +458,9 @@ class TestAPIEndpoints:
         assert data["status"] == "ready"
 
     @responses.activate
-    def test_cost_summary_endpoint(self, client, config_file, mock_prometheus_gpu_util, mock_opencost_response):
+    def test_cost_summary_endpoint(
+        self, client, config_file, mock_prometheus_gpu_util, mock_opencost_response
+    ):
         import main
 
         main.enricher = GPUEnricher(
@@ -498,7 +502,9 @@ class TestAPIEndpoints:
         assert "totals" in data
 
     @responses.activate
-    def test_recommendations_endpoint(self, client, config_file, mock_prometheus_gpu_util, mock_opencost_response):
+    def test_recommendations_endpoint(
+        self, client, config_file, mock_prometheus_gpu_util, mock_opencost_response
+    ):
         import main
 
         main.enricher = GPUEnricher(
@@ -540,7 +546,9 @@ class TestAPIEndpoints:
         assert "total_potential_savings_daily" in data
 
     @responses.activate
-    def test_gpu_utilization_endpoint(self, client, config_file, mock_prometheus_gpu_util):
+    def test_gpu_utilization_endpoint(
+        self, client, config_file, mock_prometheus_gpu_util
+    ):
         import main
 
         main.enricher = GPUEnricher(
@@ -583,14 +591,18 @@ class TestAPIEndpoints:
 
 class TestIntegration:
     @responses.activate
-    def test_full_cost_calculation_flow(self, enricher, mock_prometheus_gpu_util, mock_opencost_response):
+    def test_full_cost_calculation_flow(
+        self, enricher, mock_prometheus_gpu_util, mock_opencost_response
+    ):
         """Test the complete flow from metrics collection to recommendations."""
         # Setup all mock responses
         for _ in range(3):  # GPU util, mem util, temp
             responses.add(
                 responses.GET,
                 "http://localhost:9090/api/v1/query",
-                json=mock_prometheus_gpu_util if len(responses.calls) == 0 else {
+                json=mock_prometheus_gpu_util
+                if len(responses.calls) == 0
+                else {
                     "status": "success",
                     "data": {"result": []},
                 },

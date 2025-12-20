@@ -156,7 +156,9 @@ class ChargebackReportGenerator:
         writer.writerow(["# AI FinOps Chargeback Report"])
         writer.writerow([f"# Period: {metadata.period.value}"])
         writer.writerow(
-            [f"# Date Range: {metadata.start_date.date()} to {metadata.end_date.date()}"]
+            [
+                f"# Date Range: {metadata.start_date.date()} to {metadata.end_date.date()}"
+            ]
         )
         writer.writerow([f"# Generated: {metadata.generated_at.isoformat()}"])
         writer.writerow([])
@@ -178,36 +180,40 @@ class ChargebackReportGenerator:
 
         # Team breakdown
         writer.writerow(["## Team Cost Breakdown"])
-        writer.writerow([
-            "Team",
-            "GPU Cost ($)",
-            "K8s Cost ($)",
-            "Total Cost ($)",
-            "GPU Hours",
-            "GPU Count",
-            "Avg Utilization (%)",
-            "Idle Hours",
-            "Spot Savings Potential ($)",
-            "Budget ($)",
-            "Budget Remaining ($)",
-            "Cost Trend (%)",
-        ])
+        writer.writerow(
+            [
+                "Team",
+                "GPU Cost ($)",
+                "K8s Cost ($)",
+                "Total Cost ($)",
+                "GPU Hours",
+                "GPU Count",
+                "Avg Utilization (%)",
+                "Idle Hours",
+                "Spot Savings Potential ($)",
+                "Budget ($)",
+                "Budget Remaining ($)",
+                "Cost Trend (%)",
+            ]
+        )
 
         for report in team_reports:
-            writer.writerow([
-                report.team,
-                f"{report.gpu_cost:.2f}",
-                f"{report.k8s_cost:.2f}",
-                f"{report.total_cost:.2f}",
-                f"{report.gpu_hours:.1f}",
-                report.gpu_count,
-                f"{report.avg_utilization:.1f}",
-                f"{report.idle_hours:.1f}",
-                f"{report.spot_savings_potential:.2f}",
-                f"{report.budget:.2f}",
-                f"{report.budget_remaining:.2f}",
-                f"{report.cost_trend_pct:+.1f}",
-            ])
+            writer.writerow(
+                [
+                    report.team,
+                    f"{report.gpu_cost:.2f}",
+                    f"{report.k8s_cost:.2f}",
+                    f"{report.total_cost:.2f}",
+                    f"{report.gpu_hours:.1f}",
+                    report.gpu_count,
+                    f"{report.avg_utilization:.1f}",
+                    f"{report.idle_hours:.1f}",
+                    f"{report.spot_savings_potential:.2f}",
+                    f"{report.budget:.2f}",
+                    f"{report.budget_remaining:.2f}",
+                    f"{report.cost_trend_pct:+.1f}",
+                ]
+            )
 
         return output.getvalue()
 
@@ -246,9 +252,7 @@ class ChargebackReportGenerator:
         elements = []
 
         # Title
-        elements.append(
-            Paragraph(metadata.title, self.styles["ReportTitle"])
-        )
+        elements.append(Paragraph(metadata.title, self.styles["ReportTitle"]))
         elements.append(
             Paragraph(
                 f"Period: {metadata.start_date.date()} to {metadata.end_date.date()}",
@@ -264,9 +268,7 @@ class ChargebackReportGenerator:
         elements.append(Spacer(1, 20))
 
         # Executive Summary
-        elements.append(
-            Paragraph("Executive Summary", self.styles["SectionHeader"])
-        )
+        elements.append(Paragraph("Executive Summary", self.styles["SectionHeader"]))
 
         total_cost = sum(r.total_cost for r in team_reports)
         total_gpu_cost = sum(r.gpu_cost for r in team_reports)
@@ -289,27 +291,27 @@ class ChargebackReportGenerator:
 
         summary_table = Table(summary_data, colWidths=[2.5 * inch, 2 * inch])
         summary_table.setStyle(
-            TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a2e")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, 0), 11),
-                ("BOTTOMPADDING", (0, 0), (-1, 0), 12),
-                ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f5f5f5")),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("FONTSIZE", (0, 1), (-1, -1), 10),
-                ("TOPPADDING", (0, 1), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 1), (-1, -1), 6),
-            ])
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a1a2e")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 11),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 12),
+                    ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f5f5f5")),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("FONTSIZE", (0, 1), (-1, -1), 10),
+                    ("TOPPADDING", (0, 1), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 1), (-1, -1), 6),
+                ]
+            )
         )
         elements.append(summary_table)
         elements.append(Spacer(1, 20))
 
         # Team Cost Breakdown
-        elements.append(
-            Paragraph("Team Cost Breakdown", self.styles["SectionHeader"])
-        )
+        elements.append(Paragraph("Team Cost Breakdown", self.styles["SectionHeader"]))
 
         team_data = [
             ["Team", "Total Cost", "GPU Cost", "Utilization", "Budget Status"],
@@ -320,31 +322,40 @@ class ChargebackReportGenerator:
                 if report.budget_remaining > 0
                 else f"Over (${abs(report.budget_remaining):.0f})"
             )
-            team_data.append([
-                report.team,
-                f"${report.total_cost:,.2f}",
-                f"${report.gpu_cost:,.2f}",
-                f"{report.avg_utilization:.1f}%",
-                budget_status,
-            ])
+            team_data.append(
+                [
+                    report.team,
+                    f"${report.total_cost:,.2f}",
+                    f"${report.gpu_cost:,.2f}",
+                    f"{report.avg_utilization:.1f}%",
+                    budget_status,
+                ]
+            )
 
         team_table = Table(
             team_data,
             colWidths=[1.5 * inch, 1.2 * inch, 1.2 * inch, 1 * inch, 1.2 * inch],
         )
         team_table.setStyle(
-            TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#16213e")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, 0), 10),
-                ("BOTTOMPADDING", (0, 0), (-1, 0), 10),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("FONTSIZE", (0, 1), (-1, -1), 9),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9f9f9")]),
-            ])
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#16213e")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                    ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 10),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 10),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("FONTSIZE", (0, 1), (-1, -1), 9),
+                    (
+                        "ROWBACKGROUNDS",
+                        (0, 1),
+                        (-1, -1),
+                        [colors.white, colors.HexColor("#f9f9f9")],
+                    ),
+                ]
+            )
         )
         elements.append(team_table)
         elements.append(Spacer(1, 20))
@@ -357,27 +368,36 @@ class ChargebackReportGenerator:
 
             rec_data = [["Priority", "Type", "Team", "Potential Savings"]]
             for rec in recommendations[:10]:  # Top 10
-                rec_data.append([
-                    rec.get("severity", "medium").title(),
-                    rec.get("type", "").replace("_", " ").title(),
-                    rec.get("team", ""),
-                    f"${rec.get('potential_savings_daily', 0) * 30:,.0f}/mo",
-                ])
+                rec_data.append(
+                    [
+                        rec.get("severity", "medium").title(),
+                        rec.get("type", "").replace("_", " ").title(),
+                        rec.get("team", ""),
+                        f"${rec.get('potential_savings_daily', 0) * 30:,.0f}/mo",
+                    ]
+                )
 
             rec_table = Table(
                 rec_data,
                 colWidths=[1 * inch, 1.5 * inch, 1.5 * inch, 1.5 * inch],
             )
             rec_table.setStyle(
-                TableStyle([
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f3460")),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, -1), 9),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9f9f9")]),
-                ])
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f3460")),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 9),
+                        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                        (
+                            "ROWBACKGROUNDS",
+                            (0, 1),
+                            (-1, -1),
+                            [colors.white, colors.HexColor("#f9f9f9")],
+                        ),
+                    ]
+                )
             )
             elements.append(rec_table)
             elements.append(Spacer(1, 20))

@@ -356,7 +356,8 @@ class NotificationSender:
 
         # Remove old entries
         self._rate_limits[channel_key] = [
-            t for t in self._rate_limits[channel_key]
+            t
+            for t in self._rate_limits[channel_key]
             if now - t < self._rate_limit_window
         ]
 

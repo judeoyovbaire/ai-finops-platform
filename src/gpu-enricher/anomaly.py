@@ -218,7 +218,9 @@ class AnomalyDetector:
         if deviation_pct > self.COST_SPIKE_THRESHOLD:
             return Anomaly(
                 type=AnomalyType.COST_SPIKE,
-                severity=AnomalySeverity.CRITICAL if deviation_pct > 100 else AnomalySeverity.WARNING,
+                severity=AnomalySeverity.CRITICAL
+                if deviation_pct > 100
+                else AnomalySeverity.WARNING,
                 metric_name="daily_cost",
                 current_value=current_cost,
                 expected_value=expected,
@@ -280,7 +282,9 @@ class AnomalyDetector:
                 historical_utils, current_util
             )
             if is_anomaly and z_score > 0:
-                deviation_pct = ((current_util - expected) / expected * 100) if expected else 0
+                deviation_pct = (
+                    ((current_util - expected) / expected * 100) if expected else 0
+                )
                 return Anomaly(
                     type=AnomalyType.UTILIZATION_SPIKE,
                     severity=AnomalySeverity.INFO,
@@ -308,7 +312,11 @@ class AnomalyDetector:
         """Detect GPU temperature anomalies."""
         # High temperature regardless of utilization
         if current_temp > self.TEMP_HIGH_THRESHOLD:
-            severity = AnomalySeverity.CRITICAL if current_temp > 90 else AnomalySeverity.WARNING
+            severity = (
+                AnomalySeverity.CRITICAL
+                if current_temp > 90
+                else AnomalySeverity.WARNING
+            )
             return Anomaly(
                 type=AnomalyType.TEMPERATURE_ANOMALY,
                 severity=severity,
@@ -353,7 +361,11 @@ class AnomalyDetector:
 
         # Check for sustained efficiency drop
         recent_avg = np.mean(historical_efficiency[-7:])
-        older_avg = np.mean(historical_efficiency[:-7]) if len(historical_efficiency) > 7 else recent_avg
+        older_avg = (
+            np.mean(historical_efficiency[:-7])
+            if len(historical_efficiency) > 7
+            else recent_avg
+        )
 
         if older_avg > 0:
             degradation_pct = ((older_avg - recent_avg) / older_avg) * 100

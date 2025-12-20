@@ -436,9 +436,9 @@ class GPUEnricher:
                 team_summaries[team] = TeamCostSummary(team=team)
             team_summaries[team].k8s_cost_daily += k8s_cost
 
-            opencost_allocation.labels(
-                namespace=namespace, controller="", pod=""
-            ).set(k8s_cost)
+            opencost_allocation.labels(namespace=namespace, controller="", pod="").set(
+                k8s_cost
+            )
 
         # Update team cost metrics
         for team, summary in team_summaries.items():
@@ -452,14 +452,11 @@ class GPUEnricher:
         self._last_update = datetime.now(timezone.utc)
 
         logger.info(
-            f"Updated costs for {len(team_summaries)} teams, "
-            f"{len(gpu_metrics)} GPUs"
+            f"Updated costs for {len(team_summaries)} teams, {len(gpu_metrics)} GPUs"
         )
         return team_summaries
 
-    def _generate_recommendations(
-        self, summaries: dict[str, TeamCostSummary]
-    ) -> None:
+    def _generate_recommendations(self, summaries: dict[str, TeamCostSummary]) -> None:
         """Generate optimization recommendations for each team."""
         for team, summary in summaries.items():
             recommendations = []
@@ -525,7 +522,9 @@ class GPUEnricher:
                         "severity": rec.severity,
                         "title": rec.title,
                         "description": rec.description,
-                        "potential_savings_daily": round(rec.potential_savings_daily, 2),
+                        "potential_savings_daily": round(
+                            rec.potential_savings_daily, 2
+                        ),
                         "affected_resources": rec.affected_resources,
                     }
                 )
@@ -602,7 +601,9 @@ def health():
 def ready():
     """Readiness check endpoint."""
     if enricher is None:
-        return jsonify({"status": "not ready", "reason": "enricher not initialized"}), 503
+        return jsonify(
+            {"status": "not ready", "reason": "enricher not initialized"}
+        ), 503
     return jsonify({"status": "ready"})
 
 
@@ -811,7 +812,9 @@ def calculate_budget_forecast(
         projected_eom_spend=round(projected_eom_spend, 2),
         budget_remaining=round(budget_remaining, 2),
         burn_rate_pct=round(burn_rate_pct, 1),
-        days_until_exhaustion=round(days_until_exhaustion, 1) if days_until_exhaustion else None,
+        days_until_exhaustion=round(days_until_exhaustion, 1)
+        if days_until_exhaustion
+        else None,
         status=status,
         trend=trend,
     )
@@ -844,20 +847,22 @@ def budget_forecast():
                 budget=budget,
             )
 
-            forecasts.append({
-                "team": forecast.team,
-                "current_spend": forecast.current_spend,
-                "monthly_budget": forecast.monthly_budget,
-                "budget_remaining": forecast.budget_remaining,
-                "days_elapsed": forecast.days_elapsed,
-                "days_remaining": forecast.days_remaining,
-                "daily_avg_spend": forecast.daily_avg_spend,
-                "projected_eom_spend": forecast.projected_eom_spend,
-                "burn_rate_pct": forecast.burn_rate_pct,
-                "days_until_exhaustion": forecast.days_until_exhaustion,
-                "status": forecast.status,
-                "trend": forecast.trend,
-            })
+            forecasts.append(
+                {
+                    "team": forecast.team,
+                    "current_spend": forecast.current_spend,
+                    "monthly_budget": forecast.monthly_budget,
+                    "budget_remaining": forecast.budget_remaining,
+                    "days_elapsed": forecast.days_elapsed,
+                    "days_remaining": forecast.days_remaining,
+                    "daily_avg_spend": forecast.daily_avg_spend,
+                    "projected_eom_spend": forecast.projected_eom_spend,
+                    "burn_rate_pct": forecast.burn_rate_pct,
+                    "days_until_exhaustion": forecast.days_until_exhaustion,
+                    "status": forecast.status,
+                    "trend": forecast.trend,
+                }
+            )
 
         # Sort by status severity
         status_order = {"exceeded": 0, "critical": 1, "warning": 2, "on_track": 3}
@@ -868,16 +873,18 @@ def budget_forecast():
         total_spend = sum(f["current_spend"] for f in forecasts)
         total_projected = sum(f["projected_eom_spend"] for f in forecasts)
 
-        return jsonify({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "totals": {
-                "monthly_budget": round(total_budget, 2),
-                "current_spend": round(total_spend, 2),
-                "projected_eom_spend": round(total_projected, 2),
-                "budget_remaining": round(total_budget - total_spend, 2),
-            },
-            "forecasts": forecasts,
-        })
+        return jsonify(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "totals": {
+                    "monthly_budget": round(total_budget, 2),
+                    "current_spend": round(total_spend, 2),
+                    "projected_eom_spend": round(total_projected, 2),
+                    "budget_remaining": round(total_budget - total_spend, 2),
+                },
+                "forecasts": forecasts,
+            }
+        )
 
     except Exception as e:
         logger.error(f"Error getting budget forecast: {e}")
@@ -914,24 +921,26 @@ def team_budget_forecast(team: str):
             budget=budget,
         )
 
-        return jsonify({
-            "team": forecast.team,
-            "current_spend": forecast.current_spend,
-            "monthly_budget": forecast.monthly_budget,
-            "budget_remaining": forecast.budget_remaining,
-            "days_elapsed": forecast.days_elapsed,
-            "days_remaining": forecast.days_remaining,
-            "daily_avg_spend": forecast.daily_avg_spend,
-            "projected_eom_spend": forecast.projected_eom_spend,
-            "burn_rate_pct": forecast.burn_rate_pct,
-            "days_until_exhaustion": forecast.days_until_exhaustion,
-            "status": forecast.status,
-            "trend": forecast.trend,
-            "thresholds": {
-                "alert_pct": budget.alert_threshold_pct,
-                "critical_pct": budget.critical_threshold_pct,
-            },
-        })
+        return jsonify(
+            {
+                "team": forecast.team,
+                "current_spend": forecast.current_spend,
+                "monthly_budget": forecast.monthly_budget,
+                "budget_remaining": forecast.budget_remaining,
+                "days_elapsed": forecast.days_elapsed,
+                "days_remaining": forecast.days_remaining,
+                "daily_avg_spend": forecast.daily_avg_spend,
+                "projected_eom_spend": forecast.projected_eom_spend,
+                "burn_rate_pct": forecast.burn_rate_pct,
+                "days_until_exhaustion": forecast.days_until_exhaustion,
+                "status": forecast.status,
+                "trend": forecast.trend,
+                "thresholds": {
+                    "alert_pct": budget.alert_threshold_pct,
+                    "critical_pct": budget.critical_threshold_pct,
+                },
+            }
+        )
 
     except Exception as e:
         logger.error(f"Error getting team budget forecast: {e}")
@@ -965,25 +974,29 @@ def budget_alerts():
             )
 
             if forecast.status in ("exceeded", "critical", "warning"):
-                alerts.append({
-                    "team": team,
-                    "status": forecast.status,
-                    "current_spend": forecast.current_spend,
-                    "monthly_budget": forecast.monthly_budget,
-                    "projected_eom_spend": forecast.projected_eom_spend,
-                    "days_until_exhaustion": forecast.days_until_exhaustion,
-                    "message": _get_alert_message(forecast),
-                })
+                alerts.append(
+                    {
+                        "team": team,
+                        "status": forecast.status,
+                        "current_spend": forecast.current_spend,
+                        "monthly_budget": forecast.monthly_budget,
+                        "projected_eom_spend": forecast.projected_eom_spend,
+                        "days_until_exhaustion": forecast.days_until_exhaustion,
+                        "message": _get_alert_message(forecast),
+                    }
+                )
 
         # Sort by severity
         status_order = {"exceeded": 0, "critical": 1, "warning": 2}
         alerts.sort(key=lambda x: status_order.get(x["status"], 3))
 
-        return jsonify({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "alerts": alerts,
-            "count": len(alerts),
-        })
+        return jsonify(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "alerts": alerts,
+                "count": len(alerts),
+            }
+        )
 
     except Exception as e:
         logger.error(f"Error getting budget alerts: {e}")
@@ -1003,7 +1016,10 @@ def _get_alert_message(forecast: BudgetForecast) -> str:
             f"of monthly budget with {forecast.days_remaining} days remaining"
         )
     elif forecast.status == "warning":
-        if forecast.days_until_exhaustion and forecast.days_until_exhaustion < forecast.days_remaining:
+        if (
+            forecast.days_until_exhaustion
+            and forecast.days_until_exhaustion < forecast.days_remaining
+        ):
             return (
                 f"Team {forecast.team} may exhaust budget in "
                 f"{forecast.days_until_exhaustion:.0f} days at current rate"
@@ -1040,26 +1056,27 @@ def cost_trends():
 
         # Note: In production, use query_range for better time series data
         # This is a simplified version using instant query
-        results = enricher.query_prometheus(
-            f"avg_over_time({query})",
-            "trends"
-        )
+        results = enricher.query_prometheus(f"avg_over_time({query})", "trends")
 
         trends = []
         for result in results:
             team = result.get("metric", {}).get("team", "unknown")
             avg_cost = float(result.get("value", [0, 0])[1])
-            trends.append({
-                "team": team,
-                "period": period,
-                "avg_daily_cost": round(avg_cost, 2),
-            })
+            trends.append(
+                {
+                    "team": team,
+                    "period": period,
+                    "avg_daily_cost": round(avg_cost, 2),
+                }
+            )
 
-        return jsonify({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "period": period,
-            "trends": trends,
-        })
+        return jsonify(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "period": period,
+                "trends": trends,
+            }
+        )
 
     except Exception as e:
         logger.error(f"Error getting cost trends: {e}")
@@ -1083,6 +1100,7 @@ def get_anomaly_detector():
     if _anomaly_detector is None:
         try:
             from anomaly import anomaly_detector
+
             _anomaly_detector = anomaly_detector
         except ImportError:
             logger.warning("Anomaly detection module not available")
@@ -1095,6 +1113,7 @@ def get_rightsizing_engine():
     if _rightsizing_engine is None:
         try:
             from rightsizing import rightsizing_engine
+
             _rightsizing_engine = rightsizing_engine
         except ImportError:
             logger.warning("Rightsizing module not available")
@@ -1107,6 +1126,7 @@ def get_billing_integration():
     if _billing_integration is None:
         try:
             from billing import billing_integration, initialize_billing
+
             initialize_billing()
             _billing_integration = billing_integration
         except ImportError:
@@ -1120,6 +1140,7 @@ def get_report_generator():
     if _report_generator is None:
         try:
             from reports import report_generator
+
             _report_generator = report_generator
         except ImportError:
             logger.warning("Report generation module not available")
@@ -1181,13 +1202,17 @@ def get_anomalies():
         if team_filter:
             all_anomalies = [a for a in all_anomalies if a["team"] == team_filter]
         if severity_filter:
-            all_anomalies = [a for a in all_anomalies if a["severity"] == severity_filter]
+            all_anomalies = [
+                a for a in all_anomalies if a["severity"] == severity_filter
+            ]
 
-        return jsonify({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "anomalies": all_anomalies,
-            "count": len(all_anomalies),
-        })
+        return jsonify(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "anomalies": all_anomalies,
+                "count": len(all_anomalies),
+            }
+        )
 
     except Exception as e:
         logger.error(f"Error detecting anomalies: {e}")
@@ -1221,14 +1246,16 @@ def get_rightsizing_recommendations():
             team = gpu.team
             if team not in team_gpus:
                 team_gpus[team] = []
-            team_gpus[team].append({
-                "node": gpu.node,
-                "gpu_id": gpu.gpu_id,
-                "instance_type": gpu.instance_type,
-                "utilization": gpu.utilization,
-                "memory_util": gpu.memory_util,
-                "spot_tolerant": False,  # Would come from labels
-            })
+            team_gpus[team].append(
+                {
+                    "node": gpu.node,
+                    "gpu_id": gpu.gpu_id,
+                    "instance_type": gpu.instance_type,
+                    "utilization": gpu.utilization,
+                    "memory_util": gpu.memory_util,
+                    "spot_tolerant": False,  # Would come from labels
+                }
+            )
 
         all_recommendations = []
         for team, gpus in team_gpus.items():
@@ -1240,22 +1267,37 @@ def get_rightsizing_recommendations():
         min_savings = request.args.get("min_savings", type=float, default=0)
 
         if team_filter:
-            all_recommendations = [r for r in all_recommendations if r["team"] == team_filter]
+            all_recommendations = [
+                r for r in all_recommendations if r["team"] == team_filter
+            ]
         if min_savings > 0:
-            all_recommendations = [r for r in all_recommendations if r["savings_daily"] >= min_savings]
+            all_recommendations = [
+                r for r in all_recommendations if r["savings_daily"] >= min_savings
+            ]
 
         # Generate summary
         summary = {
             "total_recommendations": len(all_recommendations),
-            "potential_savings_daily": sum(r["savings_daily"] for r in all_recommendations if r["savings_daily"] > 0),
-            "potential_savings_monthly": sum(r["savings_daily"] for r in all_recommendations if r["savings_daily"] > 0) * 30,
+            "potential_savings_daily": sum(
+                r["savings_daily"]
+                for r in all_recommendations
+                if r["savings_daily"] > 0
+            ),
+            "potential_savings_monthly": sum(
+                r["savings_daily"]
+                for r in all_recommendations
+                if r["savings_daily"] > 0
+            )
+            * 30,
         }
 
-        return jsonify({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "summary": summary,
-            "recommendations": all_recommendations,
-        })
+        return jsonify(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "summary": summary,
+                "recommendations": all_recommendations,
+            }
+        )
 
     except Exception as e:
         logger.error(f"Error generating rightsizing recommendations: {e}")
@@ -1274,10 +1316,12 @@ def get_actual_billing():
     """
     billing = get_billing_integration()
     if billing is None or not billing.is_enabled:
-        return jsonify({
-            "error": "Billing integration not available",
-            "message": "Set ENABLE_AWS_BILLING=true and configure AWS credentials",
-        }), 503
+        return jsonify(
+            {
+                "error": "Billing integration not available",
+                "message": "Set ENABLE_AWS_BILLING=true and configure AWS credentials",
+            }
+        ), 503
 
     try:
         days = request.args.get("days", type=int, default=30)
@@ -1286,18 +1330,17 @@ def get_actual_billing():
 
         actual_costs = billing.get_actual_costs(start_date, end_date)
 
-        return jsonify({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "period": {
-                "start": start_date.isoformat(),
-                "end": end_date.isoformat(),
-                "days": days,
-            },
-            "teams": {
-                team: data.to_dict()
-                for team, data in actual_costs.items()
-            },
-        })
+        return jsonify(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "period": {
+                    "start": start_date.isoformat(),
+                    "end": end_date.isoformat(),
+                    "days": days,
+                },
+                "teams": {team: data.to_dict() for team, data in actual_costs.items()},
+            }
+        )
 
     except Exception as e:
         logger.error(f"Error fetching actual billing: {e}")
@@ -1316,10 +1359,12 @@ def get_billing_comparison():
 
     billing = get_billing_integration()
     if billing is None or not billing.is_enabled:
-        return jsonify({
-            "error": "Billing integration not available",
-            "message": "Set ENABLE_AWS_BILLING=true and configure AWS credentials",
-        }), 503
+        return jsonify(
+            {
+                "error": "Billing integration not available",
+                "message": "Set ENABLE_AWS_BILLING=true and configure AWS credentials",
+            }
+        ), 503
 
     try:
         summary = enricher.get_cost_summary()
@@ -1330,10 +1375,12 @@ def get_billing_comparison():
 
         comparison = billing.get_cost_comparison(estimated_costs)
 
-        return jsonify({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            **comparison,
-        })
+        return jsonify(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                **comparison,
+            }
+        )
 
     except Exception as e:
         logger.error(f"Error comparing billing: {e}")
@@ -1380,15 +1427,18 @@ def generate_chargeback_report():
         )
 
         from flask import Response
+
         response = Response(content, mimetype=content_type)
         response.headers["Content-Disposition"] = f"attachment; filename={filename}"
         return response
 
     except ImportError:
-        return jsonify({
-            "error": "Report generation not available",
-            "message": "Install reportlab for PDF support",
-        }), 503
+        return jsonify(
+            {
+                "error": "Report generation not available",
+                "message": "Install reportlab for PDF support",
+            }
+        ), 503
     except Exception as e:
         logger.error(f"Error generating report: {e}")
         return jsonify({"error": str(e)}), 500
@@ -1413,33 +1463,39 @@ def preview_chargeback_report():
 
         team_reports = []
         for team, data in summary.get("teams", {}).items():
-            team_reports.append({
-                "team": team,
-                "gpu_cost_mtd": round(data.get("gpu_cost_daily", 0) * now.day, 2),
-                "k8s_cost_mtd": round(data.get("k8s_cost_daily", 0) * now.day, 2),
-                "total_cost_mtd": round(data.get("total_cost_daily", 0) * now.day, 2),
-                "gpu_count": data.get("gpu_count", 0),
-                "avg_utilization": data.get("avg_utilization", 0),
-                "idle_gpu_hours": data.get("idle_gpu_hours", 0),
-            })
+            team_reports.append(
+                {
+                    "team": team,
+                    "gpu_cost_mtd": round(data.get("gpu_cost_daily", 0) * now.day, 2),
+                    "k8s_cost_mtd": round(data.get("k8s_cost_daily", 0) * now.day, 2),
+                    "total_cost_mtd": round(
+                        data.get("total_cost_daily", 0) * now.day, 2
+                    ),
+                    "gpu_count": data.get("gpu_count", 0),
+                    "avg_utilization": data.get("avg_utilization", 0),
+                    "idle_gpu_hours": data.get("idle_gpu_hours", 0),
+                }
+            )
 
-        return jsonify({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "period": {
-                "start": start_of_month.isoformat(),
-                "end": now.isoformat(),
-                "days": now.day,
-            },
-            "summary": {
-                "total_cost_mtd": sum(t["total_cost_mtd"] for t in team_reports),
-                "total_gpu_cost_mtd": sum(t["gpu_cost_mtd"] for t in team_reports),
-                "total_k8s_cost_mtd": sum(t["k8s_cost_mtd"] for t in team_reports),
-                "teams": len(team_reports),
-            },
-            "teams": team_reports,
-            "recommendations_count": len(recommendations),
-            "available_formats": ["csv", "pdf", "json"],
-        })
+        return jsonify(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "period": {
+                    "start": start_of_month.isoformat(),
+                    "end": now.isoformat(),
+                    "days": now.day,
+                },
+                "summary": {
+                    "total_cost_mtd": sum(t["total_cost_mtd"] for t in team_reports),
+                    "total_gpu_cost_mtd": sum(t["gpu_cost_mtd"] for t in team_reports),
+                    "total_k8s_cost_mtd": sum(t["k8s_cost_mtd"] for t in team_reports),
+                    "teams": len(team_reports),
+                },
+                "teams": team_reports,
+                "recommendations_count": len(recommendations),
+                "available_formats": ["csv", "pdf", "json"],
+            }
+        )
 
     except Exception as e:
         logger.error(f"Error previewing report: {e}")
@@ -1455,5 +1511,7 @@ if __name__ == "__main__":
     init_enricher()
     port = int(os.getenv("PORT", "8080"))
     logger.info(f"Starting AI FinOps GPU Enricher on port {port}")
-    logger.info(f"API authentication: {'enabled' if auth_manager.is_enabled else 'disabled'}")
+    logger.info(
+        f"API authentication: {'enabled' if auth_manager.is_enabled else 'disabled'}"
+    )
     app.run(host="0.0.0.0", port=port)
