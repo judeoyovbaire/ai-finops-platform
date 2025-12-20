@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from functools import wraps
 from typing import Optional
 
-from flask import jsonify, request
+from flask import jsonify, make_response, request
 
 logger = logging.getLogger(__name__)
 
@@ -131,12 +131,14 @@ class AuthManager:
 
         return None
 
-    def _check_rate_limit(self, key_hash: str, limit: int) -> tuple[bool, int]:
+    def _check_rate_limit(
+        self, key_hash: str, limit: int
+    ) -> tuple[bool, int, int, int]:
         """
         Check if request is within rate limit.
 
         Returns:
-            Tuple of (allowed, remaining_requests)
+            Tuple of (allowed, remaining_requests, limit, reset_time)
         """
         now = time.time()
         window = 60  # 1 minute window
@@ -149,15 +151,21 @@ class AuthManager:
         # Remove old requests outside the window
         state.requests = [t for t in state.requests if now - t < window]
 
+        # Calculate reset time (seconds until oldest request expires)
+        if state.requests:
+            reset_time = int(window - (now - state.requests[0]))
+        else:
+            reset_time = window
+
         if len(state.requests) >= limit:
-            return False, 0
+            return False, 0, limit, reset_time
 
         state.requests.append(now)
-        return True, limit - len(state.requests)
+        return True, limit - len(state.requests), limit, reset_time
 
     def validate_request(
         self, required_scopes: Optional[list[str]] = None
-    ) -> tuple[bool, Optional[str], Optional[APIKey]]:
+    ) -> tuple[bool, Optional[str], Optional[APIKey], Optional[dict]]:
         """
         Validate the current request.
 
@@ -165,36 +173,44 @@ class AuthManager:
             required_scopes: List of required scopes for this endpoint
 
         Returns:
-            Tuple of (valid, error_message, api_key)
+            Tuple of (valid, error_message, api_key, rate_limit_info)
         """
         if not self._enabled:
-            return True, None, None
+            return True, None, None, None
 
         key = self._extract_key()
         if not key:
-            return False, "API key required", None
+            return False, "API key required", None, None
 
         key_hash = self._hash_key(key)
         api_key = self._api_keys.get(key_hash)
 
         if not api_key:
-            return False, "Invalid API key", None
+            return False, "Invalid API key", None, None
 
         if not api_key.enabled:
-            return False, "API key is disabled", None
+            return False, "API key is disabled", None, None
 
         # Check scopes
         if required_scopes:
             missing_scopes = set(required_scopes) - set(api_key.scopes)
             if missing_scopes:
-                return False, f"Missing required scopes: {missing_scopes}", None
+                return False, f"Missing required scopes: {missing_scopes}", None, None
 
         # Check rate limit
-        allowed, remaining = self._check_rate_limit(key_hash, api_key.rate_limit)
-        if not allowed:
-            return False, "Rate limit exceeded", None
+        allowed, remaining, limit, reset = self._check_rate_limit(
+            key_hash, api_key.rate_limit
+        )
+        rate_limit_info = {
+            "limit": limit,
+            "remaining": remaining,
+            "reset": reset,
+        }
 
-        return True, None, api_key
+        if not allowed:
+            return False, "Rate limit exceeded", None, rate_limit_info
+
+        return True, None, api_key, rate_limit_info
 
     @property
     def is_enabled(self) -> bool:
@@ -204,6 +220,15 @@ class AuthManager:
 
 # Global auth manager instance
 auth_manager = AuthManager()
+
+
+def _add_rate_limit_headers(response, rate_limit_info: Optional[dict]):
+    """Add rate limit headers to response."""
+    if rate_limit_info:
+        response.headers["X-RateLimit-Limit"] = str(rate_limit_info["limit"])
+        response.headers["X-RateLimit-Remaining"] = str(rate_limit_info["remaining"])
+        response.headers["X-RateLimit-Reset"] = str(rate_limit_info["reset"])
+    return response
 
 
 def require_auth(scopes: Optional[list[str]] = None):
@@ -223,24 +248,37 @@ def require_auth(scopes: Optional[list[str]] = None):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            valid, error, api_key = auth_manager.validate_request(scopes)
+            valid, error, api_key, rate_limit_info = auth_manager.validate_request(
+                scopes
+            )
 
             if not valid:
-                return (
+                status_code = (
+                    429
+                    if error == "Rate limit exceeded"
+                    else 401
+                    if "Invalid" in error or "required" in error
+                    else 403
+                )
+                response = make_response(
                     jsonify(
                         {
                             "error": "Authentication failed",
                             "message": error,
                         }
                     ),
-                    401 if "Invalid" in error or "required" in error else 403,
+                    status_code,
                 )
+                return _add_rate_limit_headers(response, rate_limit_info)
 
             # Add API key info to request context if authenticated
             if api_key:
                 request.api_key = api_key
                 request.api_key_name = api_key.name
                 request.api_key_team = api_key.team
+
+            # Store rate limit info for after_request handler
+            request.rate_limit_info = rate_limit_info
 
             return f(*args, **kwargs)
 
@@ -264,22 +302,26 @@ def optional_auth():
             )
 
             if key:
-                valid, error, api_key = auth_manager.validate_request()
+                valid, error, api_key, rate_limit_info = auth_manager.validate_request()
                 if not valid:
-                    return (
+                    status_code = 429 if error == "Rate limit exceeded" else 401
+                    response = make_response(
                         jsonify(
                             {
                                 "error": "Authentication failed",
                                 "message": error,
                             }
                         ),
-                        401,
+                        status_code,
                     )
+                    return _add_rate_limit_headers(response, rate_limit_info)
 
                 if api_key:
                     request.api_key = api_key
                     request.api_key_name = api_key.name
                     request.api_key_team = api_key.team
+
+                request.rate_limit_info = rate_limit_info
 
             return f(*args, **kwargs)
 

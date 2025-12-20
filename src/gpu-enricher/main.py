@@ -23,7 +23,11 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
 )
 
-from auth import auth_manager, initialize_auth
+from auth import (
+    auth_manager,
+    initialize_auth,
+    _add_rate_limit_headers,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -33,6 +37,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+
+@app.after_request
+def add_rate_limit_headers(response):
+    """Add rate limit headers to all responses if authenticated."""
+    rate_limit_info = getattr(request, "rate_limit_info", None)
+    if rate_limit_info:
+        response = _add_rate_limit_headers(response, rate_limit_info)
+    return response
+
 
 # =============================================================================
 # Prometheus Metrics
@@ -738,12 +752,64 @@ def gpu_utilization():
 # Budget and Forecasting Endpoints
 # =============================================================================
 
-# Default team budgets (would typically come from config or database)
-DEFAULT_TEAM_BUDGETS = {
-    "ml-platform": TeamBudget(team="ml-platform", monthly_budget=5000.0),
-    "data-science": TeamBudget(team="data-science", monthly_budget=3000.0),
-    "research": TeamBudget(team="research", monthly_budget=4000.0),
-}
+
+def load_team_budgets() -> dict[str, TeamBudget]:
+    """Load team budgets from environment variables.
+
+    Environment variable format:
+        TEAM_BUDGET_<team_name>=<monthly_budget>
+        TEAM_BUDGET_<team_name>_ALERT=<alert_threshold_pct>
+        TEAM_BUDGET_<team_name>_CRITICAL=<critical_threshold_pct>
+
+    Example:
+        TEAM_BUDGET_ML_PLATFORM=5000
+        TEAM_BUDGET_ML_PLATFORM_ALERT=80
+        TEAM_BUDGET_ML_PLATFORM_CRITICAL=95
+    """
+    budgets = {}
+    default_monthly_budget = float(os.getenv("DEFAULT_TEAM_BUDGET", "5000.0"))
+
+    for key, value in os.environ.items():
+        if key.startswith("TEAM_BUDGET_") and not key.endswith(("_ALERT", "_CRITICAL")):
+            # Extract team name and convert to lowercase with hyphens
+            team_name = key[12:].lower().replace("_", "-")
+            try:
+                monthly_budget = float(value)
+                alert_threshold = float(os.getenv(f"{key}_ALERT", "80.0"))
+                critical_threshold = float(os.getenv(f"{key}_CRITICAL", "95.0"))
+
+                budgets[team_name] = TeamBudget(
+                    team=team_name,
+                    monthly_budget=monthly_budget,
+                    alert_threshold_pct=alert_threshold,
+                    critical_threshold_pct=critical_threshold,
+                )
+                logger.info(f"Loaded budget for team {team_name}: ${monthly_budget}")
+            except ValueError as e:
+                logger.warning(f"Invalid budget value for {team_name}: {e}")
+
+    # Add default budgets if none configured
+    if not budgets:
+        budgets = {
+            "ml-platform": TeamBudget(
+                team="ml-platform", monthly_budget=default_monthly_budget
+            ),
+            "data-science": TeamBudget(
+                team="data-science", monthly_budget=default_monthly_budget * 0.6
+            ),
+            "research": TeamBudget(
+                team="research", monthly_budget=default_monthly_budget * 0.8
+            ),
+        }
+        logger.info(
+            "Using default team budgets (set TEAM_BUDGET_* env vars to customize)"
+        )
+
+    return budgets
+
+
+# Team budgets loaded from environment
+DEFAULT_TEAM_BUDGETS = load_team_budgets()
 
 
 def calculate_budget_forecast(
