@@ -10,7 +10,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy all application modules
-COPY main.py auth.py anomaly.py billing.py notifications.py reports.py rightsizing.py ./
+COPY main.py auth.py anomaly.py billing.py notifications.py reports.py rightsizing.py config.py ./
 
 # Copy configuration if present
 COPY config.yaml* ./

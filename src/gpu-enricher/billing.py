@@ -943,25 +943,62 @@ billing_integration = BillingIntegration()
 
 
 def initialize_billing():
-    """Initialize billing integration from environment."""
+    """Initialize billing integration from environment.
+
+    This function initializes cloud billing integrations based on environment
+    variables. It handles errors gracefully and logs initialization status.
+
+    Environment variables:
+        ENABLE_AWS_BILLING: Set to 'true' to enable AWS Cost Explorer
+        ENABLE_GCP_BILLING: Set to 'true' to enable GCP Cloud Billing
+        ENABLE_AZURE_BILLING: Set to 'true' to enable Azure Cost Management
+    """
+    errors: list[str] = []
+
     # AWS Cost Explorer
     if os.getenv("ENABLE_AWS_BILLING", "false").lower() == "true":
-        aws_region = os.getenv("AWS_REGION", "us-east-1")
-        aws_profile = os.getenv("AWS_PROFILE")
-        billing_integration.initialize_aws(
-            region=aws_region,
-            profile_name=aws_profile,
-        )
+        try:
+            aws_region = os.getenv("AWS_REGION", "us-east-1")
+            aws_profile = os.getenv("AWS_PROFILE")
+            success = billing_integration.initialize_aws(
+                region=aws_region,
+                profile_name=aws_profile,
+            )
+            if not success:
+                errors.append("AWS: Failed to initialize Cost Explorer")
+        except NoCredentialsError:
+            errors.append(
+                "AWS: No credentials found. Set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY "
+                "or configure IAM role"
+            )
+        except ClientError as e:
+            errors.append(
+                f"AWS: API error - {e.response.get('Error', {}).get('Message', str(e))}"
+            )
+        except Exception as e:
+            errors.append(f"AWS: Unexpected error - {e}")
 
     # GCP Cloud Billing
     if os.getenv("ENABLE_GCP_BILLING", "false").lower() == "true":
         gcp_project = os.getenv("GCP_PROJECT_ID")
         gcp_billing_account = os.getenv("GCP_BILLING_ACCOUNT_ID")
         if gcp_project:
-            billing_integration.initialize_gcp(
-                project_id=gcp_project,
-                billing_account_id=gcp_billing_account,
-            )
+            try:
+                success = billing_integration.initialize_gcp(
+                    project_id=gcp_project,
+                    billing_account_id=gcp_billing_account,
+                )
+                if not success:
+                    errors.append("GCP: Failed to initialize Cloud Billing")
+                else:
+                    logger.warning(
+                        "GCP billing initialized but requires BigQuery export. "
+                        "See: https://cloud.google.com/billing/docs/how-to/export-data-bigquery"
+                    )
+            except gcp_exceptions.GoogleAPIError as e:
+                errors.append(f"GCP: API error - {e}")
+            except Exception as e:
+                errors.append(f"GCP: Unexpected error - {e}")
         else:
             logger.warning("GCP_PROJECT_ID not set, skipping GCP billing integration")
 
@@ -970,16 +1007,29 @@ def initialize_billing():
         azure_subscription = os.getenv("AZURE_SUBSCRIPTION_ID")
         azure_resource_group = os.getenv("AZURE_RESOURCE_GROUP")
         if azure_subscription:
-            billing_integration.initialize_azure(
-                subscription_id=azure_subscription,
-                resource_group=azure_resource_group,
-            )
+            try:
+                success = billing_integration.initialize_azure(
+                    subscription_id=azure_subscription,
+                    resource_group=azure_resource_group,
+                )
+                if not success:
+                    errors.append("Azure: Failed to initialize Cost Management")
+            except AzureError as e:
+                errors.append(f"Azure: API error - {e}")
+            except Exception as e:
+                errors.append(f"Azure: Unexpected error - {e}")
         else:
             logger.warning(
                 "AZURE_SUBSCRIPTION_ID not set, skipping Azure billing integration"
             )
 
+    # Log any initialization errors
+    for error in errors:
+        logger.error(f"Billing initialization error: {error}")
+
     if billing_integration.is_enabled:
         logger.info(
             f"Billing integration enabled for: {billing_integration.enabled_providers}"
         )
+    else:
+        logger.info("No billing integrations enabled")

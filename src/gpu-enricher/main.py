@@ -7,6 +7,7 @@ Provides cost attribution, idle detection, and optimization recommendations.
 
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -14,7 +15,7 @@ from typing import Optional
 
 import requests
 import yaml
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, Response
 from prometheus_client import (
     Counter,
     Gauge,
@@ -26,7 +27,18 @@ from prometheus_client import (
 from auth import (
     auth_manager,
     initialize_auth,
+    require_auth,
     _add_rate_limit_headers,
+)
+from config import (
+    thresholds,
+    ValidationError,
+    validate_team_name,
+    validate_severity,
+    validate_period,
+    validate_days,
+    validate_min_savings,
+    validate_report_format,
 )
 
 # Configure logging
@@ -585,8 +597,12 @@ class GPUEnricher:
 
 
 # =============================================================================
-# Global Instance
+# Global Instance with Thread Safety
 # =============================================================================
+
+# Thread lock for global state protection
+_enricher_lock = threading.Lock()
+_module_lock = threading.Lock()
 
 enricher: Optional[GPUEnricher] = None
 
@@ -594,10 +610,36 @@ enricher: Optional[GPUEnricher] = None
 def init_enricher():
     """Initialize the GPU enricher."""
     global enricher
-    config_path = os.getenv("CONFIG_PATH", "/etc/config/config.yaml")
-    prometheus_url = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
-    opencost_url = os.getenv("OPENCOST_URL", "http://opencost:9003")
-    enricher = GPUEnricher(config_path, prometheus_url, opencost_url)
+    with _enricher_lock:
+        config_path = os.getenv("CONFIG_PATH", "/etc/config/config.yaml")
+        prometheus_url = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
+        opencost_url = os.getenv("OPENCOST_URL", "http://opencost:9003")
+        enricher = GPUEnricher(config_path, prometheus_url, opencost_url)
+
+
+# =============================================================================
+# Standardized Error Handling
+# =============================================================================
+
+
+def api_error(message: str, status_code: int = 500, details: Optional[dict] = None):
+    """Create a standardized error response."""
+    response = {
+        "error": message,
+        "status_code": status_code,
+    }
+    if details:
+        response["details"] = details
+    return jsonify(response), status_code
+
+
+def handle_validation_error(e: ValidationError):
+    """Handle validation errors with consistent format."""
+    return api_error(
+        message=e.message,
+        status_code=400,
+        details={"field": e.field},
+    )
 
 
 # =============================================================================
@@ -1153,67 +1195,97 @@ def cost_trends():
 # Phase 3: Advanced Analytics Endpoints
 # =============================================================================
 
-# Lazy imports for Phase 3 modules
+# Lazy imports for Phase 3 modules with thread safety
 _anomaly_detector = None
 _rightsizing_engine = None
 _billing_integration = None
 _report_generator = None
+_notification_sender = None
 
 
 def get_anomaly_detector():
-    """Lazy load anomaly detector."""
+    """Lazy load anomaly detector with thread safety."""
     global _anomaly_detector
     if _anomaly_detector is None:
-        try:
-            from anomaly import anomaly_detector
+        with _module_lock:
+            if _anomaly_detector is None:  # Double-check after acquiring lock
+                try:
+                    from anomaly import anomaly_detector
 
-            _anomaly_detector = anomaly_detector
-        except ImportError:
-            logger.warning("Anomaly detection module not available")
+                    _anomaly_detector = anomaly_detector
+                except ImportError:
+                    logger.warning("Anomaly detection module not available")
     return _anomaly_detector
 
 
 def get_rightsizing_engine():
-    """Lazy load rightsizing engine."""
+    """Lazy load rightsizing engine with thread safety."""
     global _rightsizing_engine
     if _rightsizing_engine is None:
-        try:
-            from rightsizing import rightsizing_engine
+        with _module_lock:
+            if _rightsizing_engine is None:
+                try:
+                    from rightsizing import rightsizing_engine
 
-            _rightsizing_engine = rightsizing_engine
-        except ImportError:
-            logger.warning("Rightsizing module not available")
+                    _rightsizing_engine = rightsizing_engine
+                except ImportError:
+                    logger.warning("Rightsizing module not available")
     return _rightsizing_engine
 
 
 def get_billing_integration():
-    """Lazy load billing integration."""
+    """Lazy load billing integration with thread safety and error handling."""
     global _billing_integration
     if _billing_integration is None:
-        try:
-            from billing import billing_integration, initialize_billing
+        with _module_lock:
+            if _billing_integration is None:
+                try:
+                    from billing import billing_integration, initialize_billing
 
-            initialize_billing()
-            _billing_integration = billing_integration
-        except ImportError:
-            logger.warning("Billing integration module not available")
+                    initialize_billing()
+                    _billing_integration = billing_integration
+                except ImportError:
+                    logger.warning("Billing integration module not available")
+                except Exception as e:
+                    logger.error(f"Failed to initialize billing integration: {e}")
     return _billing_integration
 
 
 def get_report_generator():
-    """Lazy load report generator."""
+    """Lazy load report generator with thread safety."""
     global _report_generator
     if _report_generator is None:
-        try:
-            from reports import report_generator
+        with _module_lock:
+            if _report_generator is None:
+                try:
+                    from reports import report_generator
 
-            _report_generator = report_generator
-        except ImportError:
-            logger.warning("Report generation module not available")
+                    _report_generator = report_generator
+                except ImportError:
+                    logger.warning("Report generation module not available")
     return _report_generator
 
 
+def get_notification_sender():
+    """Lazy load notification sender with thread safety."""
+    global _notification_sender
+    if _notification_sender is None:
+        with _module_lock:
+            if _notification_sender is None:
+                try:
+                    from notifications import notification_sender, initialize_notifications
+
+                    initialize_notifications()
+                    _notification_sender = notification_sender
+                except ImportError:
+                    logger.warning("Notifications module not available")
+                except Exception as e:
+                    logger.error(f"Failed to initialize notifications: {e}")
+    return _notification_sender
+
+
 @app.route("/api/v1/anomalies")
+@require_auth(scopes=["read"])
 def get_anomalies():
     """Get detected cost and utilization anomalies.
 
@@ -1286,6 +1358,7 @@ def get_anomalies():
 
 
 @app.route("/api/v1/rightsizing")
+@require_auth(scopes=["read"])
 def get_rightsizing_recommendations():
     """Get automated right-sizing recommendations.
 
@@ -1371,6 +1444,7 @@ def get_rightsizing_recommendations():
 
 
 @app.route("/api/v1/billing/actual")
+@require_auth(scopes=["read"])
 def get_actual_billing():
     """Get actual billing data from cloud provider.
 
@@ -1414,6 +1488,7 @@ def get_actual_billing():
 
 
 @app.route("/api/v1/billing/comparison")
+@require_auth(scopes=["read"])
 def get_billing_comparison():
     """Compare estimated costs with actual billing.
 
@@ -1454,6 +1529,7 @@ def get_billing_comparison():
 
 
 @app.route("/api/v1/reports/chargeback")
+@require_auth(scopes=["read"])
 def generate_chargeback_report():
     """Generate chargeback report.
 
@@ -1511,6 +1587,7 @@ def generate_chargeback_report():
 
 
 @app.route("/api/v1/reports/chargeback/preview")
+@require_auth(scopes=["read"])
 def preview_chargeback_report():
     """Preview chargeback report data without generating file.
 

@@ -631,5 +631,238 @@ class TestIntegration:
         assert "teams" in summary
 
 
+# =============================================================================
+# Config Module Tests
+# =============================================================================
+
+
+class TestConfigModule:
+    def test_thresholds_default_values(self):
+        from config import ThresholdConfig
+
+        config = ThresholdConfig()
+        assert config.idle_gpu_threshold == 20.0
+        assert config.underutilized_threshold == 30.0
+        assert config.zscore_threshold == 2.5
+        assert config.default_rate_limit == 100
+
+    def test_load_thresholds(self):
+        from config import load_thresholds
+
+        thresholds = load_thresholds()
+        assert thresholds.idle_gpu_threshold >= 0
+        assert thresholds.underutilized_threshold >= 0
+
+    def test_validate_team_name_valid(self):
+        from config import validate_team_name
+
+        assert validate_team_name("ml-platform") == "ml-platform"
+        assert validate_team_name("DataScience") == "datascience"
+        assert validate_team_name("team_123") == "team_123"
+
+    def test_validate_team_name_invalid(self):
+        from config import validate_team_name, ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            validate_team_name("")
+        assert exc_info.value.field == "team"
+
+        with pytest.raises(ValidationError):
+            validate_team_name("a" * 100)  # Too long
+
+    def test_validate_severity_valid(self):
+        from config import validate_severity
+
+        assert validate_severity("low") == "low"
+        assert validate_severity("HIGH") == "high"
+        assert validate_severity("medium") == "medium"
+
+    def test_validate_severity_invalid(self):
+        from config import validate_severity, ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            validate_severity("invalid")
+        assert exc_info.value.field == "severity"
+
+    def test_validate_period_valid(self):
+        from config import validate_period
+
+        assert validate_period("1d") == "1d"
+        assert validate_period("7d") == "7d"
+        assert validate_period("30d") == "30d"
+
+    def test_validate_period_invalid(self):
+        from config import validate_period, ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            validate_period("5d")
+        assert exc_info.value.field == "period"
+
+    def test_validate_days(self):
+        from config import validate_days, ValidationError
+
+        assert validate_days(1) == 1
+        assert validate_days(30) == 30
+        assert validate_days(365) == 365
+
+        with pytest.raises(ValidationError):
+            validate_days(0)
+
+        with pytest.raises(ValidationError):
+            validate_days(1000)
+
+    def test_validate_report_format(self):
+        from config import validate_report_format, ValidationError
+
+        assert validate_report_format("csv") == "csv"
+        assert validate_report_format("PDF") == "pdf"
+        assert validate_report_format("json") == "json"
+
+        with pytest.raises(ValidationError):
+            validate_report_format("xml")
+
+
+# =============================================================================
+# Auth Module Tests
+# =============================================================================
+
+
+class TestAuthModule:
+    def test_api_key_creation(self):
+        from auth import APIKey
+
+        key = APIKey(
+            key_hash="abc123",
+            name="test-key",
+            scopes=["read", "write"],
+            team="ml-platform",
+            rate_limit=100,
+        )
+        assert key.name == "test-key"
+        assert "read" in key.scopes
+        assert key.rate_limit == 100
+
+    def test_api_key_has_scope(self):
+        from auth import APIKey
+
+        key = APIKey(
+            key_hash="abc123",
+            name="test",
+            scopes=["read"],
+        )
+        assert key.has_scope("read") is True
+        assert key.has_scope("write") is False
+
+    def test_api_key_defaults(self):
+        from auth import APIKey
+
+        key = APIKey(key_hash="abc", name="test", scopes=["read"])
+        assert key.team is None
+        assert key.rate_limit == 100
+        assert key.enabled is True
+
+
+# =============================================================================
+# Budget Forecast Tests
+# =============================================================================
+
+
+class TestBudgetForecast:
+    def test_budget_forecast_calculation(self):
+        from main import calculate_budget_forecast, TeamBudget
+
+        budget = TeamBudget(
+            team="ml-platform",
+            monthly_budget=5000.0,
+            alert_threshold_pct=80.0,
+            critical_threshold_pct=95.0,
+        )
+
+        forecast = calculate_budget_forecast(
+            team="ml-platform",
+            daily_cost=100.0,
+            budget=budget,
+        )
+
+        assert forecast.team == "ml-platform"
+        assert forecast.monthly_budget == 5000.0
+        assert forecast.daily_avg_spend > 0
+        assert forecast.status in ["on_track", "warning", "critical", "exceeded"]
+        assert forecast.trend in ["increasing", "stable", "decreasing"]
+
+    def test_budget_forecast_exceeded(self):
+        from main import calculate_budget_forecast, TeamBudget
+
+        budget = TeamBudget(
+            team="test-team",
+            monthly_budget=100.0,  # Very low budget
+        )
+
+        forecast = calculate_budget_forecast(
+            team="test-team",
+            daily_cost=500.0,  # Very high daily cost
+            budget=budget,
+        )
+
+        # Should be in warning or critical state
+        assert forecast.status in ["warning", "critical", "exceeded"]
+
+
+# =============================================================================
+# API Error Response Tests
+# =============================================================================
+
+
+class TestAPIErrorResponses:
+    def test_api_error_function(self):
+        from main import api_error
+
+        response, status_code = api_error("Test error", 400)
+        assert status_code == 400
+        assert b"Test error" in response.data
+
+    def test_api_error_with_details(self):
+        from main import api_error
+        import json
+
+        response, status_code = api_error(
+            "Validation failed",
+            400,
+            details={"field": "team"},
+        )
+        data = json.loads(response.data)
+        assert data["details"]["field"] == "team"
+
+
+# =============================================================================
+# Thread Safety Tests
+# =============================================================================
+
+
+class TestThreadSafety:
+    def test_module_lock_exists(self):
+        from main import _module_lock, _enricher_lock
+        import threading
+
+        assert isinstance(_module_lock, type(threading.Lock()))
+        assert isinstance(_enricher_lock, type(threading.Lock()))
+
+    def test_lazy_loading_functions_exist(self):
+        from main import (
+            get_anomaly_detector,
+            get_rightsizing_engine,
+            get_billing_integration,
+            get_report_generator,
+            get_notification_sender,
+        )
+
+        # These functions should exist and be callable
+        assert callable(get_anomaly_detector)
+        assert callable(get_rightsizing_engine)
+        assert callable(get_billing_integration)
+        assert callable(get_report_generator)
+        assert callable(get_notification_sender)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
