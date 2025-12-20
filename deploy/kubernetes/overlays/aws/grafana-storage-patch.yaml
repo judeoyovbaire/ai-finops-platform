@@ -11,17 +11,3 @@ spec:
         - name: storage
           persistentVolumeClaim:
             claimName: grafana-storage
-
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: grafana-storage
-  namespace: ai-finops
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: gp3
-  resources:
-    requests:
-      storage: 10Gi

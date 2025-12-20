@@ -23,7 +23,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
 )
 
-from auth import auth_manager, initialize_auth, require_auth, optional_auth
+from auth import auth_manager, initialize_auth
 
 # Configure logging
 logging.basicConfig(

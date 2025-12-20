@@ -5,7 +5,6 @@ Unit tests for AI FinOps GPU Enricher Service
 import json
 import os
 import tempfile
-from unittest.mock import patch, MagicMock
 
 import pytest
 import responses
@@ -17,8 +16,6 @@ from main import (
     GPUPricing,
     GPUMetrics,
     TeamCostSummary,
-    Recommendation,
-    init_enricher,
 )
 
 

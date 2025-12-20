@@ -5,11 +5,13 @@ namespace: ai-finops
 
 resources:
   - ../../base
+  - storage.yaml
 
-commonLabels:
-  environment: aws
+labels:
+  - pairs:
+      environment: aws
 
 # Production patches
-patchesStrategicMerge:
-  - prometheus-storage-patch.yaml
-  - grafana-storage-patch.yaml
+patches:
+  - path: prometheus-storage-patch.yaml
+  - path: grafana-storage-patch.yaml

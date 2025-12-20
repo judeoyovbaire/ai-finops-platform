@@ -23,8 +23,13 @@ resources:
   - grafana.yaml
   - grafana-dashboards.yaml
 
+  # RBAC and Ingress
+  - gpu-enricher-rbac.yaml
+  - ingress.yaml
+
   # Secrets management (optional - requires ESO installed)
   # - external-secrets.yaml
 
-commonLabels:
-  app.kubernetes.io/part-of: ai-finops-platform
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: ai-finops-platform

@@ -47,12 +47,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r src/calculator/requirements.txt
+          pip install -r src/gpu-enricher/requirements.txt
 
       - name: Run tests
         run: |
-          cd src/calculator
-          python -m pytest tests/ -v --cov=. --cov-report=term-missing || echo "No tests yet"
+          cd src/gpu-enricher
+          python -m pytest test_main.py -v --cov=. --cov-report=term-missing
 
   validate-manifests:
     name: Validate Kubernetes Manifests
@@ -106,12 +106,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build cost-calculator image
+      - name: Build gpu-enricher image
         uses: docker/build-push-action@v5
         with:
-          context: src/calculator
+          context: src/gpu-enricher
           push: false
-          tags: ai-finops-calculator:test
+          tags: ai-finops-gpu-enricher:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

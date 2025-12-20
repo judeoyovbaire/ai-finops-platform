@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Optional reportlab import for PDF generation
 try:
     from reportlab.lib import colors
-    from reportlab.lib.pagesizes import letter, A4
+    from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
     from reportlab.platypus import (
@@ -35,7 +35,6 @@ try:
         TableStyle,
         Paragraph,
         Spacer,
-        PageBreak,
     )
 
     PDF_AVAILABLE = True

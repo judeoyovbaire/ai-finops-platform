@@ -8,8 +8,9 @@ resources:
   - mock-gpu-metrics.yaml
 
 # For local development without real GPUs, use mock metrics
-patchesStrategicMerge:
-  - dcgm-disable-patch.yaml
+patches:
+  - path: dcgm-disable-patch.yaml
 
-commonLabels:
-  environment: local
+labels:
+  - pairs:
+      environment: local

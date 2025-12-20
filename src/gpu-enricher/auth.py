@@ -9,7 +9,6 @@ Supports multiple authentication methods:
 """
 
 import hashlib
-import hmac
 import logging
 import os
 import time
