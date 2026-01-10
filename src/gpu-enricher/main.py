@@ -1043,7 +1043,9 @@ def budget_forecast():
             # Get budget for team (use default if not configured)
             budget = DEFAULT_TEAM_BUDGETS.get(
                 team,
-                TeamBudget(team=team, monthly_budget=thresholds.default_team_budget),  # Default budget
+                TeamBudget(
+                    team=team, monthly_budget=thresholds.default_team_budget
+                ),  # Default budget
             )
 
             forecast = calculate_budget_forecast(

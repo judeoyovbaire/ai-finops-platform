@@ -1068,7 +1068,9 @@ class TestRightsizing:
         engine.add_utilization_sample("node-1", "0", 75.0, 60.0)
         engine.add_utilization_sample("node-1", "0", 80.0, 65.0)
 
-        avg_util, peak_util, avg_mem, count = engine.get_utilization_stats("node-1", "0")
+        avg_util, peak_util, avg_mem, count = engine.get_utilization_stats(
+            "node-1", "0"
+        )
         assert count == 2
         assert avg_util == 77.5
         assert peak_util == 80.0
@@ -1194,7 +1196,11 @@ class TestRightsizing:
         assert result["savings_daily"] == 5.4
 
     def test_get_summary(self):
-        from rightsizing import RightsizingEngine, RightsizeRecommendation, RightsizeAction
+        from rightsizing import (
+            RightsizingEngine,
+            RightsizeRecommendation,
+            RightsizeAction,
+        )
         from datetime import datetime, timezone
 
         engine = RightsizingEngine()
@@ -1266,7 +1272,12 @@ class TestReportGeneration:
         assert report.total_cost == 150.0
 
     def test_generate_csv_report(self):
-        from reports import ChargebackReportGenerator, TeamCostReport, ReportMetadata, ReportPeriod
+        from reports import (
+            ChargebackReportGenerator,
+            TeamCostReport,
+            ReportMetadata,
+            ReportPeriod,
+        )
         from datetime import datetime, timezone
 
         generator = ChargebackReportGenerator()
@@ -1304,7 +1315,13 @@ class TestReportGeneration:
         assert "700.00" in csv_content
 
     def test_generate_json_report(self):
-        from reports import ChargebackReportGenerator, TeamCostReport, ReportMetadata, ReportPeriod, ReportFormat
+        from reports import (
+            ChargebackReportGenerator,
+            TeamCostReport,
+            ReportMetadata,
+            ReportPeriod,
+            ReportFormat,
+        )
         from datetime import datetime, timezone
         import json
 
