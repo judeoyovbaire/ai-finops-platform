@@ -1,0 +1,121 @@
+{{- if .Values.opencost.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencost
+  namespace: {{ include "ai-finops.namespace" . }}
+  labels:
+    {{- include "ai-finops.opencost.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ai-finops.opencost.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ai-finops.opencost.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: opencost
+      containers:
+        - name: opencost
+          image: "{{ .Values.opencost.image.repository }}:{{ .Values.opencost.image.tag }}"
+          ports:
+            - containerPort: 9003
+              name: http
+          env:
+            - name: PROMETHEUS_SERVER_ENDPOINT
+              value: "http://prometheus:9090"
+            - name: CLOUD_PROVIDER_API_KEY
+              value: ""
+            - name: CLUSTER_ID
+              value: "ai-finops-cluster"
+          resources:
+            {{- toYaml .Values.opencost.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9003
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9003
+            initialDelaySeconds: 10
+            periodSeconds: 5
+        {{- if .Values.opencost.ui.enabled }}
+        - name: opencost-ui
+          image: "{{ .Values.opencost.ui.image.repository }}:{{ .Values.opencost.ui.image.tag }}"
+          ports:
+            - containerPort: 9090
+              name: ui
+          env:
+            - name: API_PORT
+              value: "9003"
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opencost
+  namespace: {{ include "ai-finops.namespace" . }}
+  labels:
+    {{- include "ai-finops.opencost.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9003
+      targetPort: 9003
+      name: http
+    {{- if .Values.opencost.ui.enabled }}
+    - port: 9090
+      targetPort: 9090
+      name: ui
+    {{- end }}
+  selector:
+    {{- include "ai-finops.opencost.selectorLabels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opencost
+  namespace: {{ include "ai-finops.namespace" . }}
+  labels:
+    {{- include "ai-finops.opencost.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "ai-finops.fullname" . }}-opencost
+  labels:
+    {{- include "ai-finops.opencost.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "deployments", "nodes", "pods", "services", "resourcequotas", "replicationcontrollers", "limitranges", "persistentvolumeclaims", "persistentvolumes", "namespaces", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "deployments", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs", "jobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "ai-finops.fullname" . }}-opencost
+  labels:
+    {{- include "ai-finops.opencost.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "ai-finops.fullname" . }}-opencost
+subjects:
+  - kind: ServiceAccount
+    name: opencost
+    namespace: {{ include "ai-finops.namespace" . }}
+{{- end }}

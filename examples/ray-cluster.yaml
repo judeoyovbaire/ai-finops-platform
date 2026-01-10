@@ -1,0 +1,256 @@
+# Ray Cluster for Distributed ML Workloads
+# Supports distributed training, hyperparameter tuning, and batch inference
+# Install KubeRay operator: helm install kuberay-operator kuberay/kuberay-operator
+
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: ml-ray-cluster
+  namespace: ml-workloads
+  labels:
+    ai-finops.io/team: "ml-platform"
+    ai-finops.io/project: "distributed-training"
+    ai-finops.io/environment: "development"
+  annotations:
+    ai-finops.io/cost-center: "ML-001"
+    ai-finops.io/budget-owner: "ml-platform@company.com"
+    ai-finops.io/spot-eligible: "true"  # Workers can use spot instances
+spec:
+  rayVersion: '2.53.0'
+  enableInTreeAutoscaling: true
+
+  headGroupSpec:
+    rayStartParams:
+      dashboard-host: '0.0.0.0'
+      num-cpus: '0'  # Head node doesn't run tasks
+    serviceType: ClusterIP
+    template:
+      metadata:
+        labels:
+          ai-finops.io/team: "ml-platform"
+          ai-finops.io/project: "distributed-training"
+          ray.io/node-type: head
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "8080"
+      spec:
+        containers:
+          - name: ray-head
+            image: rayproject/ray-ml:2.53.0-py312-gpu
+            ports:
+              - containerPort: 6379
+                name: gcs
+              - containerPort: 8265
+                name: dashboard
+              - containerPort: 10001
+                name: client
+              - containerPort: 8080
+                name: metrics
+            env:
+              - name: RAY_GRAFANA_HOST
+                value: "http://grafana:3000"
+              - name: RAY_PROMETHEUS_HOST
+                value: "http://prometheus:9090"
+            resources:
+              limits:
+                cpu: "4"
+                memory: "8Gi"
+              requests:
+                cpu: "2"
+                memory: "4Gi"
+            volumeMounts:
+              - name: ray-logs
+                mountPath: /tmp/ray
+        volumes:
+          - name: ray-logs
+            emptyDir: {}
+        nodeSelector:
+          node-role.kubernetes.io/control-plane: ""
+        tolerations:
+          - key: node-role.kubernetes.io/control-plane
+            operator: Exists
+            effect: NoSchedule
+
+  workerGroupSpecs:
+    # GPU Workers for training
+    - groupName: gpu-workers
+      replicas: 2
+      minReplicas: 1
+      maxReplicas: 10
+      rayStartParams:
+        num-gpus: '1'
+      template:
+        metadata:
+          labels:
+            ai-finops.io/team: "ml-platform"
+            ai-finops.io/project: "distributed-training"
+            ray.io/node-type: worker
+          annotations:
+            prometheus.io/scrape: "true"
+            prometheus.io/port: "8080"
+        spec:
+          containers:
+            - name: ray-worker
+              image: rayproject/ray-ml:2.53.0-py312-gpu
+              env:
+                - name: NVIDIA_VISIBLE_DEVICES
+                  value: "all"
+              resources:
+                limits:
+                  nvidia.com/gpu: 1
+                  cpu: "8"
+                  memory: "32Gi"
+                requests:
+                  nvidia.com/gpu: 1
+                  cpu: "4"
+                  memory: "16Gi"
+              volumeMounts:
+                - name: ray-logs
+                  mountPath: /tmp/ray
+                - name: dshm
+                  mountPath: /dev/shm
+          volumes:
+            - name: ray-logs
+              emptyDir: {}
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: "16Gi"
+          nodeSelector:
+            nvidia.com/gpu.present: "true"
+          tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+              effect: NoSchedule
+
+    # CPU Workers for data preprocessing
+    - groupName: cpu-workers
+      replicas: 4
+      minReplicas: 2
+      maxReplicas: 20
+      rayStartParams:
+        num-cpus: '4'
+      template:
+        metadata:
+          labels:
+            ai-finops.io/team: "ml-platform"
+            ai-finops.io/project: "distributed-training"
+            ray.io/node-type: worker
+        spec:
+          containers:
+            - name: ray-worker
+              image: rayproject/ray-ml:2.53.0-py312
+              resources:
+                limits:
+                  cpu: "4"
+                  memory: "16Gi"
+                requests:
+                  cpu: "2"
+                  memory: "8Gi"
+              volumeMounts:
+                - name: ray-logs
+                  mountPath: /tmp/ray
+          volumes:
+            - name: ray-logs
+              emptyDir: {}
+
+---
+# Ray Service for serving models
+apiVersion: ray.io/v1
+kind: RayService
+metadata:
+  name: ml-model-serving
+  namespace: ml-inference
+  labels:
+    ai-finops.io/team: "ml-platform"
+    ai-finops.io/project: "model-serving"
+    ai-finops.io/environment: "production"
+  annotations:
+    ai-finops.io/cost-center: "ML-001"
+spec:
+  serviceUnhealthySecondThreshold: 300
+  deploymentUnhealthySecondThreshold: 300
+  serveConfigV2: |
+    applications:
+      - name: ml-models
+        import_path: serve_models:app
+        route_prefix: /
+        runtime_env:
+          working_dir: "https://github.com/your-org/ml-models/archive/main.zip"
+        deployments:
+          - name: classifier
+            num_replicas: 2
+            ray_actor_options:
+              num_gpus: 0.5
+          - name: embeddings
+            num_replicas: 2
+            ray_actor_options:
+              num_gpus: 0.5
+  rayClusterConfig:
+    rayVersion: '2.53.0'
+    headGroupSpec:
+      rayStartParams:
+        dashboard-host: '0.0.0.0'
+      template:
+        metadata:
+          labels:
+            ai-finops.io/team: "ml-platform"
+        spec:
+          containers:
+            - name: ray-head
+              image: rayproject/ray-ml:2.53.0-py312-gpu
+              resources:
+                limits:
+                  cpu: "2"
+                  memory: "4Gi"
+                requests:
+                  cpu: "1"
+                  memory: "2Gi"
+    workerGroupSpecs:
+      - groupName: serve-workers
+        replicas: 2
+        minReplicas: 1
+        maxReplicas: 5
+        rayStartParams:
+          num-gpus: '1'
+        template:
+          metadata:
+            labels:
+              ai-finops.io/team: "ml-platform"
+          spec:
+            containers:
+              - name: ray-worker
+                image: rayproject/ray-ml:2.53.0-py312-gpu
+                resources:
+                  limits:
+                    nvidia.com/gpu: 1
+                    cpu: "4"
+                    memory: "16Gi"
+                  requests:
+                    nvidia.com/gpu: 1
+                    cpu: "2"
+                    memory: "8Gi"
+            nodeSelector:
+              nvidia.com/gpu.present: "true"
+            tolerations:
+              - key: nvidia.com/gpu
+                operator: Exists
+                effect: NoSchedule
+
+---
+# Service for Ray Dashboard access
+apiVersion: v1
+kind: Service
+metadata:
+  name: ray-dashboard
+  namespace: ml-workloads
+  labels:
+    ai-finops.io/team: "ml-platform"
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8265
+      targetPort: 8265
+      name: dashboard
+  selector:
+    ray.io/node-type: head

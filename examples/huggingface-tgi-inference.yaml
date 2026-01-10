@@ -1,0 +1,185 @@
+# Hugging Face Text Generation Inference (TGI) Deployment
+# High-performance inference server for LLMs with AI FinOps cost tracking
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama2-7b-tgi
+  namespace: ml-inference
+  labels:
+    ai-finops.io/team: "llm-platform"
+    ai-finops.io/project: "chatbot-api"
+    ai-finops.io/model: "llama2-7b-chat"
+    ai-finops.io/environment: "production"
+    app.kubernetes.io/name: llama2-tgi
+  annotations:
+    ai-finops.io/cost-center: "ML-003"
+    ai-finops.io/budget-owner: "llm-platform@company.com"
+    ai-finops.io/spot-eligible: "false"  # Production - use on-demand
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llama2-tgi
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: llama2-tgi
+        ai-finops.io/team: "llm-platform"
+        ai-finops.io/project: "chatbot-api"
+        ai-finops.io/model: "llama2-7b-chat"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: tgi
+          image: ghcr.io/huggingface/text-generation-inference:3.3.5
+          args:
+            - --model-id=meta-llama/Llama-2-7b-chat-hf
+            - --num-shard=1
+            - --max-input-length=4096
+            - --max-total-tokens=8192
+            - --max-batch-prefill-tokens=4096
+            - --quantize=awq
+          env:
+            - name: HUGGING_FACE_HUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0"
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+              memory: "24Gi"
+              cpu: "8"
+            requests:
+              nvidia.com/gpu: 1
+              memory: "20Gi"
+              cpu: "4"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          volumeMounts:
+            - name: model-cache
+              mountPath: /data
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: tgi-model-cache
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: "8Gi"
+      nodeSelector:
+        nvidia.com/gpu.product: "NVIDIA-A10G"
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llama2-tgi
+  namespace: ml-inference
+  labels:
+    ai-finops.io/team: "llm-platform"
+    app.kubernetes.io/name: llama2-tgi
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  selector:
+    app.kubernetes.io/name: llama2-tgi
+
+---
+# Horizontal Pod Autoscaler based on GPU utilization
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: llama2-tgi-hpa
+  namespace: ml-inference
+  labels:
+    ai-finops.io/team: "llm-platform"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: llama2-7b-tgi
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: DCGM_FI_DEV_GPU_UTIL
+        target:
+          type: AverageValue
+          averageValue: "70"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+
+---
+# PVC for model cache
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tgi-model-cache
+  namespace: ml-inference
+  labels:
+    ai-finops.io/team: "llm-platform"
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: efs-sc
+
+---
+# Secret for Hugging Face token (create separately)
+# kubectl create secret generic hf-token --from-literal=token=hf_xxxxx -n ml-inference
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hf-token
+  namespace: ml-inference
+  labels:
+    ai-finops.io/team: "llm-platform"
+type: Opaque
+stringData:
+  token: "YOUR_HF_TOKEN_HERE"

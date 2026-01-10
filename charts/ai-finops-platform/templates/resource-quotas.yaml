@@ -1,0 +1,41 @@
+{{- if .Values.resourceQuotas.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ai-finops-quota
+  namespace: {{ include "ai-finops.namespace" . }}
+  labels:
+    {{- include "ai-finops.labels" . | nindent 4 }}
+spec:
+  hard:
+    requests.cpu: {{ .Values.resourceQuotas.limits.cpu | quote }}
+    requests.memory: {{ .Values.resourceQuotas.limits.memory | quote }}
+    limits.cpu: {{ .Values.resourceQuotas.limits.cpu | quote }}
+    limits.memory: {{ .Values.resourceQuotas.limits.memory | quote }}
+    pods: {{ .Values.resourceQuotas.limits.pods | quote }}
+    requests.nvidia.com/gpu: {{ .Values.resourceQuotas.limits.gpus | quote }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ai-finops-limits
+  namespace: {{ include "ai-finops.namespace" . }}
+  labels:
+    {{- include "ai-finops.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "4"
+        memory: 8Gi
+    - type: Pod
+      max:
+        cpu: "8"
+        memory: 16Gi
+{{- end }}

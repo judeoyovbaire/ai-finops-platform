@@ -1,0 +1,102 @@
+{{- if .Values.gpuEnricher.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gpu-enricher-config
+  namespace: {{ include "ai-finops.namespace" . }}
+  labels:
+    {{- include "ai-finops.gpuEnricher.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    pricing:
+      {{- toYaml .Values.pricing | nindent 6 }}
+    thresholds:
+      idle_gpu_utilization: 20
+      low_utilization: 50
+      high_temperature: 85
+    labels:
+      {{- toYaml .Values.labels | nindent 6 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-enricher
+  namespace: {{ include "ai-finops.namespace" . }}
+  labels:
+    {{- include "ai-finops.gpuEnricher.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.gpuEnricher.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ai-finops.gpuEnricher.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ai-finops.gpuEnricher.selectorLabels" . | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        checksum/config: {{ .Values.pricing | toJson | sha256sum }}
+    spec:
+      containers:
+        - name: gpu-enricher
+          image: "{{ .Values.gpuEnricher.image.repository }}:{{ .Values.gpuEnricher.image.tag }}"
+          imagePullPolicy: {{ .Values.gpuEnricher.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: PROMETHEUS_URL
+              value: "http://prometheus:9090"
+            - name: OPENCOST_URL
+              value: "http://opencost:9003"
+            - name: CONFIG_PATH
+              value: "/etc/config/config.yaml"
+            - name: LOG_LEVEL
+              value: {{ .Values.gpuEnricher.config.logLevel | quote }}
+            - name: MIN_COST_FACTOR
+              value: {{ .Values.gpuEnricher.config.minCostFactor | quote }}
+            - name: DEFAULT_TEAM_BUDGET
+              value: {{ .Values.gpuEnricher.config.defaultTeamBudget | quote }}
+            {{- if .Values.gpuEnricher.auth.enabled }}
+            - name: ENABLE_API_AUTH
+              value: "true"
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/config
+          resources:
+            {{- toYaml .Values.gpuEnricher.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: gpu-enricher-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gpu-enricher
+  namespace: {{ include "ai-finops.namespace" . }}
+  labels:
+    {{- include "ai-finops.gpuEnricher.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  selector:
+    {{- include "ai-finops.gpuEnricher.selectorLabels" . | nindent 4 }}
+{{- end }}

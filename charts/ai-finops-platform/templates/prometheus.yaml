@@ -1,0 +1,226 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: {{ include "ai-finops.namespace" . }}
+  labels:
+    {{- include "ai-finops.prometheus.labels" . | nindent 4 }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'ai-finops'
+        env: 'production'
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - alertmanager:9093
+    rule_files:
+      - /etc/prometheus/rules/*.yaml
+    scrape_configs:
+      - job_name: 'dcgm-exporter'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - {{ include "ai-finops.namespace" . }}
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: dcgm-exporter
+            action: keep
+      - job_name: 'opencost'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - {{ include "ai-finops.namespace" . }}
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: opencost
+            action: keep
+      - job_name: 'gpu-enricher'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - {{ include "ai-finops.namespace" . }}
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: gpu-enricher
+            action: keep
+      - job_name: 'gpu-workloads'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            regex: "true"
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_label_ai_finops_io_team]
+            target_label: team
+          - source_labels: [__meta_kubernetes_pod_label_ai_finops_io_model]
+            target_label: model
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: {{ include "ai-finops.namespace" . }}
+  labels:
+    {{- include "ai-finops.prometheus.labels" . | nindent 4 }}
+data:
+  ai-finops-rules.yaml: |
+    groups:
+      - name: ai-finops-alerts
+        rules:
+          - alert: GPUIdleHigh
+            expr: avg by (node, gpu) (DCGM_FI_DEV_GPU_UTIL) < 20
+            for: 30m
+            labels:
+              severity: warning
+            annotations:
+              summary: "GPU idle on {{ "{{" }} $labels.node {{ "}}" }}"
+          - alert: GPUTemperatureHigh
+            expr: DCGM_FI_DEV_GPU_TEMP > 85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High GPU temperature on {{ "{{" }} $labels.node {{ "}}" }}"
+          - alert: TeamBudgetExceeded
+            expr: ai_finops_team_cost_daily > {{ .Values.budgets.defaultMonthlyBudget | div 30 }}
+            labels:
+              severity: warning
+            annotations:
+              summary: "Team {{ "{{" }} $labels.team {{ "}}" }} exceeded daily budget"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: {{ include "ai-finops.namespace" . }}
+  labels:
+    {{- include "ai-finops.prometheus.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.prometheus.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ai-finops.prometheus.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ai-finops.prometheus.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: "{{ .Values.prometheus.image.repository }}:{{ .Values.prometheus.image.tag }}"
+          args:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+            - '--storage.tsdb.retention.time={{ .Values.prometheus.retention }}'
+            - '--web.enable-lifecycle'
+          ports:
+            - containerPort: 9090
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: rules
+              mountPath: /etc/prometheus/rules
+            - name: storage
+              mountPath: /prometheus
+          resources:
+            {{- toYaml .Values.prometheus.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: rules
+          configMap:
+            name: prometheus-rules
+        - name: storage
+          {{- if .Values.prometheus.storage.enabled }}
+          persistentVolumeClaim:
+            claimName: prometheus-storage
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: {{ include "ai-finops.namespace" . }}
+  labels:
+    {{- include "ai-finops.prometheus.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9090
+      targetPort: 9090
+      name: http
+  selector:
+    {{- include "ai-finops.prometheus.selectorLabels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: {{ include "ai-finops.namespace" . }}
+  labels:
+    {{- include "ai-finops.prometheus.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "ai-finops.fullname" . }}-prometheus
+  labels:
+    {{- include "ai-finops.prometheus.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get"]
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "ai-finops.fullname" . }}-prometheus
+  labels:
+    {{- include "ai-finops.prometheus.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "ai-finops.fullname" . }}-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: {{ include "ai-finops.namespace" . }}
+{{- if .Values.prometheus.storage.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-storage
+  namespace: {{ include "ai-finops.namespace" . }}
+  labels:
+    {{- include "ai-finops.prometheus.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.prometheus.storage.size }}
+  {{- if .Values.prometheus.storage.storageClass }}
+  storageClassName: {{ .Values.prometheus.storage.storageClass }}
+  {{- end }}
+{{- end }}
+{{- end }}

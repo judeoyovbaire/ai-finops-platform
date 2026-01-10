@@ -177,6 +177,11 @@ ai-finops-platform/
 ├── .github/
 │   └── workflows/
 │       └── ci.yaml                 # CI pipeline (lint, test, build, scan)
+├── charts/
+│   └── ai-finops-platform/         # Helm chart
+│       ├── Chart.yaml
+│       ├── values.yaml
+│       └── templates/
 ├── deploy/
 │   └── kubernetes/
 │       ├── base/                   # Base Kustomize manifests
@@ -205,14 +210,18 @@ ai-finops-platform/
 │       ├── rightsizing.py          # Right-sizing recommendations (Phase 3)
 │       ├── billing.py              # AWS Cost Explorer integration (Phase 3)
 │       ├── reports.py              # Chargeback report generation (Phase 3)
-│       ├── test_main.py            # Unit tests (50+ tests)
+│       ├── test_main.py            # Unit tests (82 tests)
 │       ├── requirements.txt
 │       └── Dockerfile
 ├── dashboards/
 │   └── gpu-overview.json           # Comprehensive GPU dashboard
 ├── examples/
-│   ├── sample-training-job.yaml    # Training job with labels
-│   └── sample-inference-deployment.yaml  # Inference with HPA
+│   ├── sample-training-job.yaml           # Basic training job
+│   ├── sample-inference-deployment.yaml   # Inference with HPA
+│   ├── pytorch-distributed-training.yaml  # PyTorch multi-node training
+│   ├── huggingface-tgi-inference.yaml     # Hugging Face TGI server
+│   ├── ray-cluster.yaml                   # Ray distributed cluster
+│   └── README.md
 ├── scripts/
 │   └── deploy-local.sh             # Local deployment automation
 ├── Makefile                        # Build and deployment commands
@@ -258,6 +267,46 @@ make deploy-aws
 # Verify deployment
 make status
 ```
+
+### Quick Start - Helm
+
+```bash
+# Add the Helm repository (or use local chart)
+cd charts/ai-finops-platform
+
+# Install with default values
+helm install ai-finops . -n ai-finops --create-namespace
+
+# Install with custom values
+helm install ai-finops . -n ai-finops --create-namespace \
+  --set grafana.adminPassword=secure-password \
+  --set prometheus.storage.enabled=true \
+  --set prometheus.storage.size=100Gi \
+  --set alertmanager.slack.enabled=true \
+  --set alertmanager.slack.webhookUrl=https://hooks.slack.com/xxx
+
+# Upgrade an existing release
+helm upgrade ai-finops . -n ai-finops
+
+# Uninstall
+helm uninstall ai-finops -n ai-finops
+```
+
+**Helm Values Configuration:**
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `global.namespace` | Kubernetes namespace | `ai-finops` |
+| `gpuEnricher.enabled` | Deploy GPU Enricher | `true` |
+| `gpuEnricher.config.minCostFactor` | Min cost factor for idle GPUs | `0.0` |
+| `prometheus.enabled` | Deploy Prometheus | `true` |
+| `prometheus.storage.enabled` | Enable persistent storage | `false` |
+| `grafana.adminPassword` | Grafana admin password | `admin` |
+| `alertmanager.slack.enabled` | Enable Slack notifications | `false` |
+| `dcgmExporter.enabled` | Deploy DCGM Exporter | `true` |
+| `networkPolicies.enabled` | Enable network policies | `true` |
+
+See `charts/ai-finops-platform/values.yaml` for all available options.
 
 ### API Endpoints
 

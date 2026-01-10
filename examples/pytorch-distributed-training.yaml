@@ -1,0 +1,171 @@
+# PyTorch Distributed Training Job with AI FinOps Labels
+# This example uses PyTorchJob from Kubeflow Training Operator
+# Install: kubectl apply -k "github.com/kubeflow/training-operator/manifests/overlays/standalone"
+
+apiVersion: kubeflow.org/v1
+kind: PyTorchJob
+metadata:
+  name: bert-finetuning
+  namespace: ml-workloads
+  labels:
+    ai-finops.io/team: "nlp-team"
+    ai-finops.io/project: "bert-sentiment"
+    ai-finops.io/model: "bert-base-uncased"
+    ai-finops.io/environment: "training"
+  annotations:
+    ai-finops.io/cost-center: "ML-002"
+    ai-finops.io/budget-owner: "nlp-team@company.com"
+    ai-finops.io/estimated-duration: "4h"
+spec:
+  pytorchReplicaSpecs:
+    Master:
+      replicas: 1
+      restartPolicy: OnFailure
+      template:
+        metadata:
+          labels:
+            ai-finops.io/team: "nlp-team"
+            ai-finops.io/project: "bert-sentiment"
+          annotations:
+            prometheus.io/scrape: "true"
+            prometheus.io/port: "9400"
+        spec:
+          containers:
+            - name: pytorch
+              image: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+              command:
+                - python
+                - -m
+                - torch.distributed.run
+                - --nproc_per_node=1
+                - --nnodes=3
+                - --node_rank=$(RANK)
+                - --master_addr=$(MASTER_ADDR)
+                - --master_port=$(MASTER_PORT)
+                - train.py
+              env:
+                - name: NCCL_DEBUG
+                  value: "INFO"
+                - name: WANDB_PROJECT
+                  value: "bert-sentiment"
+              resources:
+                limits:
+                  nvidia.com/gpu: 1
+                  memory: "32Gi"
+                  cpu: "8"
+                requests:
+                  nvidia.com/gpu: 1
+                  memory: "16Gi"
+                  cpu: "4"
+              volumeMounts:
+                - name: training-data
+                  mountPath: /data
+                - name: model-output
+                  mountPath: /output
+                - name: dshm
+                  mountPath: /dev/shm
+          volumes:
+            - name: training-data
+              persistentVolumeClaim:
+                claimName: training-data-pvc
+            - name: model-output
+              persistentVolumeClaim:
+                claimName: model-output-pvc
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: "16Gi"
+          nodeSelector:
+            nvidia.com/gpu.product: "NVIDIA-A100-SXM4-40GB"
+          tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+              effect: NoSchedule
+
+    Worker:
+      replicas: 2
+      restartPolicy: OnFailure
+      template:
+        metadata:
+          labels:
+            ai-finops.io/team: "nlp-team"
+            ai-finops.io/project: "bert-sentiment"
+          annotations:
+            prometheus.io/scrape: "true"
+            prometheus.io/port: "9400"
+        spec:
+          containers:
+            - name: pytorch
+              image: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+              command:
+                - python
+                - -m
+                - torch.distributed.run
+                - --nproc_per_node=1
+                - --nnodes=3
+                - --node_rank=$(RANK)
+                - --master_addr=$(MASTER_ADDR)
+                - --master_port=$(MASTER_PORT)
+                - train.py
+              resources:
+                limits:
+                  nvidia.com/gpu: 1
+                  memory: "32Gi"
+                  cpu: "8"
+                requests:
+                  nvidia.com/gpu: 1
+                  memory: "16Gi"
+                  cpu: "4"
+              volumeMounts:
+                - name: training-data
+                  mountPath: /data
+                - name: dshm
+                  mountPath: /dev/shm
+          volumes:
+            - name: training-data
+              persistentVolumeClaim:
+                claimName: training-data-pvc
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: "16Gi"
+          nodeSelector:
+            nvidia.com/gpu.product: "NVIDIA-A100-SXM4-40GB"
+          tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+              effect: NoSchedule
+
+---
+# PVC for training data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: training-data-pvc
+  namespace: ml-workloads
+  labels:
+    ai-finops.io/team: "nlp-team"
+spec:
+  accessModes:
+    - ReadOnlyMany
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: efs-sc
+
+---
+# PVC for model output
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-output-pvc
+  namespace: ml-workloads
+  labels:
+    ai-finops.io/team: "nlp-team"
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: efs-sc

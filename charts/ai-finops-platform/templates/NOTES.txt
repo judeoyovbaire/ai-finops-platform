@@ -1,0 +1,32 @@
+
+AI FinOps Platform has been deployed!
+
+{{- if .Values.gpuEnricher.enabled }}
+GPU Enricher API:
+  kubectl port-forward svc/gpu-enricher 8080:8080 -n {{ include "ai-finops.namespace" . }}
+  curl http://localhost:8080/api/v1/costs/summary
+{{- end }}
+
+{{- if .Values.grafana.enabled }}
+Grafana Dashboard:
+  kubectl port-forward svc/grafana 3000:3000 -n {{ include "ai-finops.namespace" . }}
+  Open http://localhost:3000 (admin/{{ .Values.grafana.adminPassword }})
+{{- end }}
+
+{{- if .Values.prometheus.enabled }}
+Prometheus:
+  kubectl port-forward svc/prometheus 9090:9090 -n {{ include "ai-finops.namespace" . }}
+  Open http://localhost:9090
+{{- end }}
+
+{{- if .Values.opencost.enabled }}
+OpenCost:
+  kubectl port-forward svc/opencost 9003:9003 -n {{ include "ai-finops.namespace" . }}
+  Open http://localhost:9003
+{{- end }}
+
+To label your GPU workloads for cost attribution:
+  kubectl label pod <pod-name> ai-finops.io/team=<team-name>
+  kubectl label pod <pod-name> ai-finops.io/project=<project-name>
+
+Documentation: https://github.com/judeoyovbaire/ai-finops-platform

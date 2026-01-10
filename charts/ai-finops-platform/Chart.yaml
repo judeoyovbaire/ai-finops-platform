@@ -1,0 +1,24 @@
+apiVersion: v2
+name: ai-finops-platform
+description: AI/ML Infrastructure FinOps Platform - GPU cost monitoring, optimization recommendations, and chargeback reporting
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - finops
+  - gpu
+  - kubernetes
+  - cost-optimization
+  - machine-learning
+  - mlops
+  - observability
+home: https://github.com/judeoyovbaire/ai-finops-platform
+sources:
+  - https://github.com/judeoyovbaire/ai-finops-platform
+maintainers:
+  - name: Jude Oyovbaire
+    url: https://github.com/judeoyovbaire
+icon: https://raw.githubusercontent.com/judeoyovbaire/ai-finops-platform/main/docs/icon.png
+annotations:
+  category: Monitoring
+  licenses: MIT

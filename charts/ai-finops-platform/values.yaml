@@ -1,0 +1,224 @@
+# AI FinOps Platform Helm Values
+# Override these values for your deployment
+
+# Global settings
+global:
+  namespace: ai-finops
+  # Cloud provider: aws, gcp, azure
+  cloudProvider: aws
+
+# GPU Enricher Service
+gpuEnricher:
+  enabled: true
+  image:
+    repository: ghcr.io/judeoyovbaire/ai-finops-gpu-enricher
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  # Environment variables
+  config:
+    logLevel: INFO
+    minCostFactor: "0.0"
+    defaultTeamBudget: "5000.0"
+  # API Authentication (optional)
+  auth:
+    enabled: false
+    # Set these via --set or external secret
+    # apiKeyReadonly: ""
+    # apiKeyAdmin: ""
+
+# Prometheus
+prometheus:
+  enabled: true
+  image:
+    repository: prom/prometheus
+    tag: v3.8.1
+  replicas: 1
+  retention: 15d
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  storage:
+    enabled: false
+    size: 50Gi
+    storageClass: ""
+
+# Grafana
+grafana:
+  enabled: true
+  image:
+    repository: grafana/grafana
+    tag: "12.3.1"
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  adminPassword: admin
+  storage:
+    enabled: false
+    size: 10Gi
+    storageClass: ""
+
+# OpenCost
+opencost:
+  enabled: true
+  image:
+    repository: ghcr.io/opencost/opencost
+    tag: 1.118.0
+  ui:
+    enabled: true
+    image:
+      repository: ghcr.io/opencost/opencost-ui
+      tag: 1.118.0
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# DCGM Exporter (GPU metrics)
+dcgmExporter:
+  enabled: true
+  image:
+    repository: nvcr.io/nvidia/k8s/dcgm-exporter
+    tag: "4.4.2-4.7.1-ubuntu22.04"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Alertmanager
+alertmanager:
+  enabled: true
+  image:
+    repository: prom/alertmanager
+    tag: v0.30.0
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  # Notification integrations
+  slack:
+    enabled: false
+    webhookUrl: ""
+    channel: "#finops-alerts"
+  pagerduty:
+    enabled: false
+    serviceKey: ""
+
+# Thanos (multi-cluster aggregation)
+thanos:
+  enabled: false
+  image:
+    repository: quay.io/thanos/thanos
+    tag: v0.40.1
+  objectStorage:
+    type: s3
+    bucket: ai-finops-thanos-metrics
+    region: us-east-1
+    # endpoint: ""
+    # accessKey: ""
+    # secretKey: ""
+
+# Infracost (cloud pricing API)
+infracost:
+  enabled: false
+  image:
+    repository: infracost/infracost
+    tag: latest
+  apiKey: ""
+
+# Network Policies
+networkPolicies:
+  enabled: true
+
+# Resource Quotas
+resourceQuotas:
+  enabled: true
+  limits:
+    cpu: "20"
+    memory: 40Gi
+    pods: "50"
+    gpus: "10"
+
+# Ingress
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: finops.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# GPU Pricing Configuration
+pricing:
+  aws:
+    g4dn.xlarge:
+      on_demand: 0.526
+      spot_avg: 0.158
+    g4dn.2xlarge:
+      on_demand: 0.752
+      spot_avg: 0.226
+    g5.xlarge:
+      on_demand: 1.006
+      spot_avg: 0.302
+    p3.2xlarge:
+      on_demand: 3.06
+      spot_avg: 0.918
+    p4d.24xlarge:
+      on_demand: 32.77
+      spot_avg: 9.83
+  gcp:
+    n1-standard-4-t4:
+      on_demand: 0.35
+      spot_avg: 0.11
+    a2-highgpu-1g:
+      on_demand: 3.67
+      spot_avg: 1.10
+  azure:
+    Standard_NC4as_T4_v3:
+      on_demand: 0.526
+      spot_avg: 0.158
+    Standard_NC24ads_A100_v4:
+      on_demand: 3.67
+      spot_avg: 1.10
+
+# Budget thresholds
+budgets:
+  defaultMonthlyBudget: 5000
+  alertThresholdPercent: 80
+  criticalThresholdPercent: 95
+
+# Cost attribution labels
+labels:
+  team: ai-finops.io/team
+  project: ai-finops.io/project
+  model: ai-finops.io/model
+  environment: ai-finops.io/environment
