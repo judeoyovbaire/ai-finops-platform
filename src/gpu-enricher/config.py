@@ -39,6 +39,37 @@ class ThresholdConfig:
     default_rate_limit: int = 100  # Requests per minute
     notification_rate_limit: int = 30  # Max notifications per minute
 
+    # Cost Calculation Settings
+    min_cost_factor: float = 0.0  # Minimum cost factor for idle GPUs (0.0-1.0)
+    # Set to 0.0 for accurate idle cost (shows $0 for truly idle)
+    # Set to 0.1 for baseline cost assumption (10% minimum charge)
+
+    # Budget Defaults
+    default_team_budget: float = 5000.0  # Default monthly budget per team
+
+
+# Default GPU Pricing Configuration
+DEFAULT_GPU_PRICING = {
+    "aws": {
+        "g4dn.xlarge": {"on_demand": 0.526, "spot_avg": 0.158},
+        "g4dn.2xlarge": {"on_demand": 0.752, "spot_avg": 0.226},
+        "g4dn.4xlarge": {"on_demand": 1.204, "spot_avg": 0.361},
+        "g5.xlarge": {"on_demand": 1.006, "spot_avg": 0.302},
+        "g5.2xlarge": {"on_demand": 1.212, "spot_avg": 0.364},
+        "p3.2xlarge": {"on_demand": 3.06, "spot_avg": 0.918},
+        "p3.8xlarge": {"on_demand": 12.24, "spot_avg": 3.672},
+        "p4d.24xlarge": {"on_demand": 32.77, "spot_avg": 9.831},
+    },
+    "gcp": {
+        "n1-standard-4-t4": {"on_demand": 0.35, "spot_avg": 0.11},
+        "a2-highgpu-1g": {"on_demand": 3.67, "spot_avg": 1.10},
+    },
+    "azure": {
+        "Standard_NC4as_T4_v3": {"on_demand": 0.526, "spot_avg": 0.158},
+        "Standard_NC6s_v3": {"on_demand": 3.06, "spot_avg": 0.918},
+    },
+}
+
 
 def load_thresholds() -> ThresholdConfig:
     """Load thresholds from environment variables with defaults."""
@@ -66,6 +97,10 @@ def load_thresholds() -> ThresholdConfig:
         # Rate Limiting
         default_rate_limit=int(os.getenv("DEFAULT_RATE_LIMIT", "100")),
         notification_rate_limit=int(os.getenv("NOTIFICATION_RATE_LIMIT", "30")),
+        # Cost Calculation
+        min_cost_factor=float(os.getenv("MIN_COST_FACTOR", "0.0")),
+        # Budget Defaults
+        default_team_budget=float(os.getenv("DEFAULT_TEAM_BUDGET", "5000.0")),
     )
 
 

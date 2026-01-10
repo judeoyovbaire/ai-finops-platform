@@ -863,5 +863,613 @@ class TestThreadSafety:
         assert callable(get_billing_integration)
 
 
+# =============================================================================
+# Phase 3: Anomaly Detection Tests
+# =============================================================================
+
+
+class TestAnomalyDetection:
+    def test_anomaly_detector_initialization(self):
+        from anomaly import AnomalyDetector
+
+        detector = AnomalyDetector(zscore_threshold=3.0, iqr_multiplier=2.0)
+        assert detector.zscore_threshold == 3.0
+        assert detector.iqr_multiplier == 2.0
+
+    def test_zscore_anomaly_detection(self):
+        from anomaly import AnomalyDetector
+
+        detector = AnomalyDetector(zscore_threshold=2.0)
+        values = [10, 11, 10, 12, 11, 10, 11]
+
+        # Normal value - should not be anomaly
+        is_anomaly, z_score, expected = detector.detect_zscore_anomaly(values, 11)
+        assert not is_anomaly
+
+        # Extreme value - should be anomaly
+        is_anomaly, z_score, expected = detector.detect_zscore_anomaly(values, 100)
+        assert is_anomaly
+        assert z_score > 2.0
+
+    def test_zscore_insufficient_data(self):
+        from anomaly import AnomalyDetector
+
+        detector = AnomalyDetector()
+        values = [10, 11]  # Only 2 data points
+
+        is_anomaly, z_score, expected = detector.detect_zscore_anomaly(values, 50)
+        assert not is_anomaly  # Not enough data
+
+    def test_iqr_anomaly_detection(self):
+        from anomaly import AnomalyDetector
+
+        detector = AnomalyDetector(iqr_multiplier=1.5)
+        values = [10, 12, 11, 13, 10, 11, 12, 11]
+
+        # Normal value - should not be anomaly
+        is_anomaly, deviation, median = detector.detect_iqr_anomaly(values, 11)
+        assert not is_anomaly
+
+        # Outlier - should be anomaly
+        is_anomaly, deviation, median = detector.detect_iqr_anomaly(values, 50)
+        assert is_anomaly
+
+    def test_moving_average_anomaly(self):
+        from anomaly import AnomalyDetector
+
+        detector = AnomalyDetector()
+        values = [100] * 30  # Stable at 100
+
+        # 50% spike
+        is_anomaly, deviation_pct, moving_avg = detector.detect_moving_average_anomaly(
+            values, 150, window_size=24, threshold_pct=30.0
+        )
+        assert is_anomaly
+        assert deviation_pct == 50.0
+
+    def test_cost_anomaly_detection(self):
+        from anomaly import AnomalyDetector, AnomalyType
+
+        detector = AnomalyDetector()
+        historical_costs = [100, 105, 98, 102, 100, 103, 99, 101]
+
+        # Cost spike
+        anomaly = detector.detect_cost_anomaly("test-team", 250, historical_costs)
+        assert anomaly is not None
+        assert anomaly.type == AnomalyType.COST_SPIKE
+
+    def test_temperature_anomaly_detection(self):
+        from anomaly import AnomalyDetector, AnomalyType
+
+        detector = AnomalyDetector()
+
+        # High temperature anomaly
+        anomaly = detector.detect_temperature_anomaly(
+            node="gpu-node-1",
+            gpu_id="0",
+            team="test-team",
+            current_temp=92,
+            utilization=80,
+        )
+        assert anomaly is not None
+        assert anomaly.type == AnomalyType.TEMPERATURE_ANOMALY
+        assert anomaly.severity.value == "critical"
+
+    def test_idle_pattern_detection(self):
+        from anomaly import AnomalyDetector, AnomalyType
+
+        detector = AnomalyDetector()
+        # 6 consecutive low utilization samples
+        historical_utils = [15, 12, 10, 8, 14, 11]
+
+        anomaly = detector.detect_utilization_anomaly(
+            node="gpu-node-1",
+            gpu_id="0",
+            team="test-team",
+            current_util=10,
+            historical_utils=historical_utils,
+        )
+        assert anomaly is not None
+        assert anomaly.type == AnomalyType.IDLE_PATTERN
+
+    def test_run_all_detections(self):
+        from anomaly import AnomalyDetector
+
+        detector = AnomalyDetector()
+        metrics = {
+            "current_cost": 100,
+            "historical_costs": [50, 52, 48, 51, 49],
+            "gpus": [
+                {
+                    "node": "gpu-node-1",
+                    "gpu_id": "0",
+                    "utilization": 10,
+                    "temperature": 95,
+                }
+            ],
+            "efficiency": 30,
+            "historical_efficiency": [],
+        }
+
+        anomalies = detector.run_all_detections("test-team", metrics)
+        assert isinstance(anomalies, list)
+
+    def test_anomaly_to_dict(self):
+        from anomaly import Anomaly, AnomalyType, AnomalySeverity
+        from datetime import datetime, timezone
+
+        anomaly = Anomaly(
+            type=AnomalyType.COST_SPIKE,
+            severity=AnomalySeverity.WARNING,
+            metric_name="daily_cost",
+            current_value=150.0,
+            expected_value=100.0,
+            deviation_pct=50.0,
+            team="test-team",
+            resource="team_budget",
+            timestamp=datetime.now(timezone.utc),
+            description="Test anomaly",
+            recommendation="Test recommendation",
+        )
+
+        result = anomaly.to_dict()
+        assert result["type"] == "cost_spike"
+        assert result["severity"] == "warning"
+        assert result["deviation_pct"] == 50.0
+
+
+# =============================================================================
+# Phase 3: Right-Sizing Tests
+# =============================================================================
+
+
+class TestRightsizing:
+    def test_rightsizing_engine_initialization(self):
+        from rightsizing import RightsizingEngine, INSTANCE_CATALOG
+
+        engine = RightsizingEngine()
+        assert engine.catalog == INSTANCE_CATALOG
+
+    def test_instance_spec_dataclass(self):
+        from rightsizing import InstanceSpec
+
+        spec = InstanceSpec(
+            instance_type="g4dn.xlarge",
+            cloud="aws",
+            gpu_count=1,
+            gpu_model="T4",
+            gpu_memory_gb=16,
+            vcpus=4,
+            memory_gb=16,
+            on_demand_hourly=0.526,
+            spot_hourly=0.158,
+        )
+        assert spec.instance_type == "g4dn.xlarge"
+        assert spec.on_demand_hourly == 0.526
+
+    def test_find_smaller_instance(self):
+        from rightsizing import RightsizingEngine
+
+        engine = RightsizingEngine()
+        smaller = engine.find_smaller_instance("aws:g4dn.2xlarge")
+        assert smaller == "aws:g4dn.xlarge"
+
+    def test_find_larger_instance(self):
+        from rightsizing import RightsizingEngine
+
+        engine = RightsizingEngine()
+        larger = engine.find_larger_instance("aws:g4dn.xlarge")
+        assert larger == "aws:g4dn.2xlarge"
+
+    def test_add_utilization_sample(self):
+        from rightsizing import RightsizingEngine
+
+        engine = RightsizingEngine()
+        engine.add_utilization_sample("node-1", "0", 75.0, 60.0)
+        engine.add_utilization_sample("node-1", "0", 80.0, 65.0)
+
+        avg_util, peak_util, avg_mem, count = engine.get_utilization_stats("node-1", "0")
+        assert count == 2
+        assert avg_util == 77.5
+        assert peak_util == 80.0
+
+    def test_analyze_gpu_insufficient_data(self):
+        from rightsizing import RightsizingEngine
+
+        engine = RightsizingEngine()
+        # Only add a few samples (less than MIN_DATA_POINTS)
+        for i in range(5):
+            engine.add_utilization_sample("node-1", "0", 50.0, 40.0)
+
+        rec = engine.analyze_gpu("node-1", "0", "test-team", "aws:g4dn.xlarge")
+        assert rec is None  # Not enough data
+
+    def test_analyze_gpu_idle_termination(self):
+        from rightsizing import RightsizingEngine, RightsizeAction
+
+        engine = RightsizingEngine()
+        # Add enough samples with very low utilization
+        for i in range(30):
+            engine.add_utilization_sample("node-1", "0", 5.0, 5.0)
+
+        rec = engine.analyze_gpu("node-1", "0", "test-team", "aws:g4dn.xlarge")
+        assert rec is not None
+        assert rec.action == RightsizeAction.TERMINATE
+        assert rec.savings_pct == 100
+
+    def test_analyze_gpu_downsize(self):
+        from rightsizing import RightsizingEngine, RightsizeAction
+
+        engine = RightsizingEngine()
+        # Add enough samples with low utilization
+        for i in range(30):
+            engine.add_utilization_sample("node-1", "0", 25.0, 30.0)
+
+        rec = engine.analyze_gpu("node-1", "0", "test-team", "aws:g4dn.2xlarge")
+        assert rec is not None
+        assert rec.action == RightsizeAction.DOWNSIZE
+        assert rec.savings_daily > 0
+
+    def test_analyze_gpu_upsize(self):
+        from rightsizing import RightsizingEngine, RightsizeAction
+
+        engine = RightsizingEngine()
+        # Add enough samples with high utilization
+        for i in range(30):
+            engine.add_utilization_sample("node-1", "0", 90.0, 85.0)
+
+        rec = engine.analyze_gpu("node-1", "0", "test-team", "aws:g4dn.xlarge")
+        assert rec is not None
+        assert rec.action == RightsizeAction.UPSIZE
+        assert rec.savings_daily < 0  # Negative savings (cost increase)
+
+    def test_analyze_gpu_spot_migration(self):
+        from rightsizing import RightsizingEngine, RightsizeAction
+
+        engine = RightsizingEngine()
+        # Add enough samples with moderate utilization
+        for i in range(30):
+            engine.add_utilization_sample("node-1", "0", 50.0, 40.0)
+
+        rec = engine.analyze_gpu(
+            "node-1", "0", "test-team", "aws:g4dn.xlarge", is_spot_tolerant=True
+        )
+        assert rec is not None
+        assert rec.action == RightsizeAction.SPOT_MIGRATE
+        assert rec.savings_daily > 0
+
+    def test_analyze_team(self):
+        from rightsizing import RightsizingEngine
+
+        engine = RightsizingEngine()
+        # Pre-populate with enough data
+        for i in range(30):
+            engine.add_utilization_sample("node-1", "0", 20.0, 15.0)
+            engine.add_utilization_sample("node-2", "0", 90.0, 85.0)
+
+        gpus = [
+            {
+                "node": "node-1",
+                "gpu_id": "0",
+                "instance_type": "aws:g4dn.xlarge",
+                "utilization": 20.0,
+                "memory_util": 15.0,
+            },
+            {
+                "node": "node-2",
+                "gpu_id": "0",
+                "instance_type": "aws:g4dn.xlarge",
+                "utilization": 90.0,
+                "memory_util": 85.0,
+            },
+        ]
+
+        recommendations = engine.analyze_team("test-team", gpus)
+        assert len(recommendations) >= 1
+
+    def test_rightsizing_recommendation_to_dict(self):
+        from rightsizing import RightsizeRecommendation, RightsizeAction
+        from datetime import datetime, timezone
+
+        rec = RightsizeRecommendation(
+            action=RightsizeAction.DOWNSIZE,
+            current_instance="aws:g4dn.2xlarge",
+            recommended_instance="g4dn.xlarge",
+            team="test-team",
+            node="node-1",
+            reason="Underutilized",
+            current_cost_daily=18.0,
+            projected_cost_daily=12.6,
+            savings_daily=5.4,
+            savings_pct=30.0,
+            confidence=0.9,
+            utilization_avg=25.0,
+            utilization_peak=40.0,
+            memory_util_avg=30.0,
+            timestamp=datetime.now(timezone.utc),
+        )
+
+        result = rec.to_dict()
+        assert result["action"] == "downsize"
+        assert result["savings_daily"] == 5.4
+
+    def test_get_summary(self):
+        from rightsizing import RightsizingEngine, RightsizeRecommendation, RightsizeAction
+        from datetime import datetime, timezone
+
+        engine = RightsizingEngine()
+        recommendations = [
+            RightsizeRecommendation(
+                action=RightsizeAction.DOWNSIZE,
+                current_instance="g4dn.2xlarge",
+                recommended_instance="g4dn.xlarge",
+                team="test",
+                node="node-1",
+                reason="Test",
+                current_cost_daily=18.0,
+                projected_cost_daily=12.6,
+                savings_daily=5.4,
+                savings_pct=30.0,
+                confidence=0.9,
+                utilization_avg=25.0,
+                utilization_peak=40.0,
+                memory_util_avg=30.0,
+                timestamp=datetime.now(timezone.utc),
+            )
+        ]
+
+        summary = engine.get_summary(recommendations)
+        assert summary["total_recommendations"] == 1
+        assert summary["potential_savings_daily"] == 5.4
+        assert summary["potential_savings_monthly"] == 162.0
+
+
+# =============================================================================
+# Phase 3: Report Generation Tests
+# =============================================================================
+
+
+class TestReportGeneration:
+    def test_report_metadata(self):
+        from reports import ReportMetadata, ReportPeriod
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        metadata = ReportMetadata(
+            title="Test Report",
+            period=ReportPeriod.MONTHLY,
+            start_date=now,
+            end_date=now,
+            generated_at=now,
+            generated_by="test",
+        )
+        assert metadata.title == "Test Report"
+        assert metadata.period == ReportPeriod.MONTHLY
+
+    def test_team_cost_report(self):
+        from reports import TeamCostReport
+
+        report = TeamCostReport(
+            team="test-team",
+            gpu_cost=100.0,
+            k8s_cost=50.0,
+            total_cost=150.0,
+            gpu_hours=24.0,
+            gpu_count=1,
+            avg_utilization=75.0,
+            idle_hours=2.0,
+            spot_savings_potential=30.0,
+            budget=5000.0,
+            budget_remaining=4850.0,
+            cost_trend_pct=5.0,
+        )
+        assert report.total_cost == 150.0
+
+    def test_generate_csv_report(self):
+        from reports import ChargebackReportGenerator, TeamCostReport, ReportMetadata, ReportPeriod
+        from datetime import datetime, timezone
+
+        generator = ChargebackReportGenerator()
+        now = datetime.now(timezone.utc)
+
+        metadata = ReportMetadata(
+            title="Test Report",
+            period=ReportPeriod.MONTHLY,
+            start_date=now,
+            end_date=now,
+            generated_at=now,
+            generated_by="test",
+        )
+
+        team_reports = [
+            TeamCostReport(
+                team="ml-platform",
+                gpu_cost=500.0,
+                k8s_cost=200.0,
+                total_cost=700.0,
+                gpu_hours=720.0,
+                gpu_count=1,
+                avg_utilization=75.0,
+                idle_hours=48.0,
+                spot_savings_potential=150.0,
+                budget=5000.0,
+                budget_remaining=4300.0,
+                cost_trend_pct=10.0,
+            )
+        ]
+
+        csv_content = generator.generate_csv(team_reports, metadata)
+        assert "AI FinOps Chargeback Report" in csv_content
+        assert "ml-platform" in csv_content
+        assert "700.00" in csv_content
+
+    def test_generate_json_report(self):
+        from reports import ChargebackReportGenerator, TeamCostReport, ReportMetadata, ReportPeriod, ReportFormat
+        from datetime import datetime, timezone
+        import json
+
+        generator = ChargebackReportGenerator()
+        now = datetime.now(timezone.utc)
+
+        metadata = ReportMetadata(
+            title="Test Report",
+            period=ReportPeriod.MONTHLY,
+            start_date=now,
+            end_date=now,
+            generated_at=now,
+            generated_by="test",
+        )
+
+        team_reports = [
+            TeamCostReport(
+                team="ml-platform",
+                gpu_cost=500.0,
+                k8s_cost=200.0,
+                total_cost=700.0,
+                gpu_hours=720.0,
+                gpu_count=1,
+                avg_utilization=75.0,
+                idle_hours=48.0,
+                spot_savings_potential=150.0,
+                budget=5000.0,
+                budget_remaining=4300.0,
+                cost_trend_pct=10.0,
+            )
+        ]
+
+        content, content_type = generator.generate_report(
+            team_reports, metadata, format=ReportFormat.JSON
+        )
+
+        assert content_type == "application/json"
+        data = json.loads(content.decode("utf-8"))
+        assert data["summary"]["total_cost"] == 700.0
+        assert len(data["teams"]) == 1
+
+    def test_generate_monthly_chargeback_report(self):
+        from reports import generate_monthly_chargeback_report
+
+        team_data = {
+            "ml-platform": {
+                "gpu_cost_daily": 50.0,
+                "k8s_cost_daily": 20.0,
+                "total_cost_daily": 70.0,
+                "gpu_count": 2,
+                "avg_utilization": 65.0,
+                "idle_gpu_hours": 4.0,
+            }
+        }
+
+        content, content_type, filename = generate_monthly_chargeback_report(
+            team_data=team_data,
+            recommendations=[],
+            anomalies=[],
+            format="csv",
+        )
+
+        assert content_type == "text/csv"
+        assert "chargeback-report" in filename
+        assert b"ml-platform" in content
+
+
+# =============================================================================
+# Phase 3: Billing Integration Tests
+# =============================================================================
+
+
+class TestBillingIntegration:
+    def test_billing_record_dataclass(self):
+        from billing import BillingRecord
+        from datetime import datetime, timezone
+
+        record = BillingRecord(
+            date=datetime.now(timezone.utc),
+            service="EC2",
+            resource_id="i-1234567890",
+            resource_tags={"team": "ml-platform"},
+            usage_type="BoxUsage:g4dn.xlarge",
+            usage_quantity=24.0,
+            usage_unit="Hours",
+            cost=12.62,
+            currency="USD",
+            cloud_provider="aws",
+        )
+        assert record.cost == 12.62
+        assert record.cloud_provider == "aws"
+
+    def test_team_billing_data_to_dict(self):
+        from billing import TeamBillingData
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        data = TeamBillingData(
+            team="ml-platform",
+            period_start=now,
+            period_end=now,
+            total_cost=1000.0,
+            gpu_cost=800.0,
+            compute_cost=100.0,
+            storage_cost=50.0,
+            network_cost=30.0,
+            other_cost=20.0,
+            currency="USD",
+            records=[],
+        )
+
+        result = data.to_dict()
+        assert result["team"] == "ml-platform"
+        assert result["total_cost"] == 1000.0
+        assert result["breakdown"]["gpu"] == 800.0
+
+    def test_billing_integration_disabled_by_default(self):
+        from billing import BillingIntegration
+
+        integration = BillingIntegration()
+        assert not integration.is_enabled
+        assert integration.enabled_providers == []
+
+    def test_get_actual_costs_when_disabled(self):
+        from billing import BillingIntegration
+
+        integration = BillingIntegration()
+        result = integration.get_actual_costs()
+        assert result == {}
+
+    def test_get_cost_comparison_no_data(self):
+        from billing import BillingIntegration
+
+        integration = BillingIntegration()
+        result = integration.get_cost_comparison({"team1": 100.0})
+        assert result["status"] == "no_data"
+
+
+# =============================================================================
+# Phase 3: Config Updates Tests
+# =============================================================================
+
+
+class TestConfigUpdates:
+    def test_min_cost_factor_config(self):
+        from config import ThresholdConfig
+
+        config = ThresholdConfig()
+        assert config.min_cost_factor == 0.0
+
+    def test_default_team_budget_config(self):
+        from config import ThresholdConfig
+
+        config = ThresholdConfig()
+        assert config.default_team_budget == 5000.0
+
+    def test_default_gpu_pricing_config(self):
+        from config import DEFAULT_GPU_PRICING
+
+        assert "aws" in DEFAULT_GPU_PRICING
+        assert "gcp" in DEFAULT_GPU_PRICING
+        assert "azure" in DEFAULT_GPU_PRICING
+        assert "g4dn.xlarge" in DEFAULT_GPU_PRICING["aws"]
+        assert DEFAULT_GPU_PRICING["aws"]["g4dn.xlarge"]["on_demand"] == 0.526
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

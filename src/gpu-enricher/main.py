@@ -30,6 +30,7 @@ from auth import (
     require_auth,
     _add_rate_limit_headers,
 )
+from config import thresholds, DEFAULT_GPU_PRICING
 
 # Configure logging
 logging.basicConfig(
@@ -253,13 +254,16 @@ class GPUEnricher:
             return self._default_pricing()
 
     def _default_pricing(self) -> dict[str, GPUPricing]:
-        """Return default GPU pricing."""
-        return {
-            "aws:g4dn.xlarge": GPUPricing(on_demand=0.526, spot_avg=0.158),
-            "aws:g4dn.2xlarge": GPUPricing(on_demand=0.752, spot_avg=0.226),
-            "aws:g5.xlarge": GPUPricing(on_demand=1.006, spot_avg=0.302),
-            "aws:p3.2xlarge": GPUPricing(on_demand=3.06, spot_avg=0.918),
-        }
+        """Return default GPU pricing from centralized config."""
+        pricing = {}
+        for cloud, instances in DEFAULT_GPU_PRICING.items():
+            for instance_type, prices in instances.items():
+                key = f"{cloud}:{instance_type}"
+                pricing[key] = GPUPricing(
+                    on_demand=prices["on_demand"],
+                    spot_avg=prices["spot_avg"],
+                )
+        return pricing
 
     def query_prometheus(self, query: str, query_type: str = "gpu") -> list[dict]:
         """Query Prometheus for metrics with error tracking."""
@@ -286,6 +290,114 @@ class GPUEnricher:
         except Exception as e:
             logger.error(f"Unexpected error querying Prometheus: {e}")
             prometheus_query_errors.labels(query_type=query_type).inc()
+            return []
+
+    def query_prometheus_range(
+        self,
+        query: str,
+        start_time: datetime,
+        end_time: datetime,
+        step: str = "1h",
+        team_filter: Optional[str] = None,
+    ) -> list[dict]:
+        """Query Prometheus for time-series data using query_range API.
+
+        Args:
+            query: PromQL query
+            start_time: Start of time range
+            end_time: End of time range
+            step: Query resolution (e.g., "1h", "1d")
+            team_filter: Optional team to filter by
+
+        Returns:
+            List of trend data with time series
+        """
+        start_ts = time.time()
+        try:
+            # Build query with optional team filter
+            if team_filter:
+                full_query = f'{query}{{team="{team_filter}"}}'
+            else:
+                full_query = query
+
+            response = requests.get(
+                f"{self.prometheus_url}/api/v1/query_range",
+                params={
+                    "query": full_query,
+                    "start": start_time.timestamp(),
+                    "end": end_time.timestamp(),
+                    "step": step,
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            result = response.json()
+            duration = time.time() - start_ts
+            query_duration.labels(source="prometheus").observe(duration)
+
+            # Process results into trend format
+            trends = []
+            for series in result.get("data", {}).get("result", []):
+                team = series.get("metric", {}).get("team", "unknown")
+                values = series.get("values", [])
+
+                # Calculate statistics from time series
+                costs = [float(v[1]) for v in values if v[1] != "NaN"]
+                if costs:
+                    avg_cost = sum(costs) / len(costs)
+                    min_cost = min(costs)
+                    max_cost = max(costs)
+                    # Calculate trend (comparing first half to second half)
+                    mid = len(costs) // 2
+                    if mid > 0:
+                        first_half_avg = sum(costs[:mid]) / mid
+                        second_half_avg = sum(costs[mid:]) / (len(costs) - mid)
+                        if first_half_avg > 0:
+                            trend_pct = (
+                                (second_half_avg - first_half_avg) / first_half_avg
+                            ) * 100
+                        else:
+                            trend_pct = 0.0
+                    else:
+                        trend_pct = 0.0
+                else:
+                    avg_cost = min_cost = max_cost = trend_pct = 0.0
+
+                # Include time series data points
+                data_points = [
+                    {
+                        "timestamp": datetime.fromtimestamp(
+                            float(v[0]), tz=timezone.utc
+                        ).isoformat(),
+                        "cost": round(float(v[1]), 2) if v[1] != "NaN" else None,
+                    }
+                    for v in values
+                ]
+
+                trends.append(
+                    {
+                        "team": team,
+                        "avg_daily_cost": round(avg_cost, 2),
+                        "min_daily_cost": round(min_cost, 2),
+                        "max_daily_cost": round(max_cost, 2),
+                        "trend_pct": round(trend_pct, 1),
+                        "data_points": data_points,
+                    }
+                )
+
+            return trends
+
+        except requests.exceptions.Timeout:
+            logger.error("Prometheus query_range timeout")
+            prometheus_query_errors.labels(query_type="trends").inc()
+            return []
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Prometheus query_range failed: {e}")
+            prometheus_query_errors.labels(query_type="trends").inc()
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error in query_range: {e}")
+            prometheus_query_errors.labels(query_type="trends").inc()
             return []
 
     def query_opencost(self, window: str = "1d") -> dict:
@@ -412,8 +524,11 @@ class GPUEnricher:
                 pricing = self.pricing.get("aws:g4dn.xlarge", GPUPricing(0.526, 0.158))
 
             # Calculate hourly cost based on utilization
+            # min_cost_factor: 0.0 = accurate (idle GPUs show $0)
+            #                  0.1 = baseline assumption (10% minimum cost)
             utilization_factor = gpu.utilization / 100.0
-            hourly_cost = pricing.on_demand * max(utilization_factor, 0.1)
+            min_factor = thresholds.min_cost_factor
+            hourly_cost = pricing.on_demand * max(utilization_factor, min_factor)
 
             # Update metrics
             gpu_cost_hourly.labels(
@@ -790,7 +905,7 @@ def load_team_budgets() -> dict[str, TeamBudget]:
         TEAM_BUDGET_ML_PLATFORM_CRITICAL=95
     """
     budgets = {}
-    default_monthly_budget = float(os.getenv("DEFAULT_TEAM_BUDGET", "5000.0"))
+    default_monthly_budget = thresholds.default_team_budget
 
     for key, value in os.environ.items():
         if key.startswith("TEAM_BUDGET_") and not key.endswith(("_ALERT", "_CRITICAL")):
@@ -825,7 +940,8 @@ def load_team_budgets() -> dict[str, TeamBudget]:
             ),
         }
         logger.info(
-            "Using default team budgets (set TEAM_BUDGET_* env vars to customize)"
+            f"Using default team budgets: ${default_monthly_budget:.0f} "
+            "(set TEAM_BUDGET_* env vars to customize)"
         )
 
     return budgets
@@ -927,7 +1043,7 @@ def budget_forecast():
             # Get budget for team (use default if not configured)
             budget = DEFAULT_TEAM_BUDGETS.get(
                 team,
-                TeamBudget(team=team, monthly_budget=5000.0),  # Default budget
+                TeamBudget(team=team, monthly_budget=thresholds.default_team_budget),  # Default budget
             )
 
             forecast = calculate_budget_forecast(
@@ -1001,7 +1117,7 @@ def team_budget_forecast(team: str):
         team_data = summary["teams"][team]
         budget = DEFAULT_TEAM_BUDGETS.get(
             team,
-            TeamBudget(team=team, monthly_budget=5000.0),
+            TeamBudget(team=team, monthly_budget=thresholds.default_team_budget),
         )
 
         forecast = calculate_budget_forecast(
@@ -1053,7 +1169,7 @@ def budget_alerts():
         for team, team_data in summary.get("teams", {}).items():
             budget = DEFAULT_TEAM_BUDGETS.get(
                 team,
-                TeamBudget(team=team, monthly_budget=5000.0),
+                TeamBudget(team=team, monthly_budget=thresholds.default_team_budget),
             )
 
             forecast = calculate_budget_forecast(
@@ -1129,7 +1245,7 @@ def cost_trends():
         period: Time period - 7d, 30d, 90d (default: 7d)
 
     Returns:
-        JSON with cost trend data.
+        JSON with cost trend data including time series.
     """
     if enricher is None:
         return jsonify({"error": "Enricher not initialized"}), 503
@@ -1138,31 +1254,26 @@ def cost_trends():
         team_filter = request.args.get("team")
         period = request.args.get("period", "7d")
 
-        # Query Prometheus for historical data
-        query = f"ai_finops_team_cost_daily[{period}]"
-        if team_filter:
-            query = f'ai_finops_team_cost_daily{{team="{team_filter}"}}[{period}]'
+        # Parse period to get time range
+        period_days = {"1d": 1, "7d": 7, "30d": 30, "90d": 90}.get(period, 7)
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(days=period_days)
 
-        # Note: In production, use query_range for better time series data
-        # This is a simplified version using instant query
-        results = enricher.query_prometheus(f"avg_over_time({query})", "trends")
-
-        trends = []
-        for result in results:
-            team = result.get("metric", {}).get("team", "unknown")
-            avg_cost = float(result.get("value", [0, 0])[1])
-            trends.append(
-                {
-                    "team": team,
-                    "period": period,
-                    "avg_daily_cost": round(avg_cost, 2),
-                }
-            )
+        # Use query_range for proper time-series data
+        trends = enricher.query_prometheus_range(
+            query="ai_finops_team_cost_daily",
+            start_time=start_time,
+            end_time=end_time,
+            step="1d",
+            team_filter=team_filter,
+        )
 
         return jsonify(
             {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": end_time.isoformat(),
                 "period": period,
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
                 "trends": trends,
             }
         )
