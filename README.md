@@ -4,13 +4,15 @@ Cost optimization platform for AI/ML workloads providing visibility into GPU uti
 
 [![CI](https://github.com/judeoyovbaire/ai-finops-platform/actions/workflows/ci.yaml/badge.svg)](https://github.com/judeoyovbaire/ai-finops-platform/actions/workflows/ci.yaml)
 
+> **Status: code-complete prototype, not yet run on a GPU.** The services, tests, Helm charts and CI are in place, but the DCGM queries have not yet run against a real GPU exporter. The next step is to run it during the GPU sessions of my [inference lab](https://github.com/judeoyovbaire/mlops-platform) and publish measured GPU-hour cost and idle time here.
+
 ## The Problem
 
 Organizations running AI/ML workloads face significant cost challenges:
 
 | Challenge | Impact |
 |-----------|--------|
-| No GPU utilization visibility | 40-60% of GPU capacity sits idle |
+| No GPU utilization visibility | Idle GPUs are paid for but invisible |
 | Unknown cost per inference | Can't optimize high-cost models |
 | No team/project attribution | No accountability for spend |
 | Reactive cost management | Budget overruns discovered too late |
@@ -62,14 +64,16 @@ This platform provides comprehensive cost observability for AI infrastructure by
 └────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Key Outcomes
+## Intended Outcomes
+
+What the platform is designed to provide. None of these has been measured yet: it has not run against a real GPU.
 
 | Metric | Before | After | Impact |
 |--------|--------|-------|--------|
 | GPU utilization visibility | None | Real-time | Identify idle resources |
 | Cost attribution | Manual estimates | Per-model tracking | Enable chargeback |
 | Idle GPU detection | Days to discover | Instant alerts | Reduce waste |
-| Spot recommendations | Ad-hoc | Automated | 60-70% savings potential |
+| Spot recommendations | Ad-hoc | Automated | Savings to be measured |
 | Budget tracking | Monthly surprise | Daily visibility | Proactive management |
 
 ## Features
